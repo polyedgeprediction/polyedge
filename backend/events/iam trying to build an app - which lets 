@@ -1,0 +1,654 @@
+iam trying to build an app - which lets me find all the top performing wallets in poly market and see what they are interested in as of now.
+
+poly market has certain APIs that will be use but some of these APIs are not that sufficient and direct so we must do some tweeking on our side so that the process works properly
+
+
+and this is how i plan to implement this app: - 
+
+1. Poly market provides an api called /leaderboard to get all the top performing PNL belonging to certain categoery.
+2. We store a set of categories[that includes all the wallets] and get all the wallets, category wise and store it in our table.
+3. this is how our table looks like : 'Wallet' table and 'WalletCategoryStat' table
+4. we hit the 'leaderboard' API is everyday and update these tables every single day(we have around 900 wallets from this -  we apply the condition that the PNL > 10K)
+5. Now we have all the wallets that are performing well and their PNL details - now we need to know 'what are all the bets they took to get this PNL?' and 'what are their current bets?[so that we can copy trade]'
+6. For this poly market provides two APIs but before this we need to understand something about the context of polymarket and how bets are contructed over there:
+* In polymarkets, all bets are called as 'events'
+* within each events there can be one or more 'markets'
+* each market  will have two outcomes.
+* for example : [Event] Where will Barron Trump attend College?
+* [Market] Will Barron attend Georgetown? [yes][no] -> outcomes
+* [Market] Will Barron attend NYU?[yes][no]
+* [Market] Will Barron attend UPenn?[yes][no]
+* [Market] Will Barron attend Harvard?[yes][no]
+* [Market] Will Barron attend another college?[yes][no]
+   
+- a position is a certain investment made on a outcome of a certain merket in a certain event.
+
+Now our goal is to find the 'bets a certain wallet has taken that lead to this PNL?' and 'the bets that a certain wallet has currently open?'
+
+For this polymarket provides two APIs:
+1. to get all the open positions
+2. to get all the closed positions
+
+Challenge 1 : Get all the open positions
+
+* polymarket has a API to get all the open positions - and this is the API - https://data-api.polymarket.com/positions?user=0xf705fa045201391d9632b7f3cde06a5e24453ca7
+* this is an exmaple of an open position :
+
+```json
+{
+        "proxyWallet": "0xf705fa045201391d9632b7f3cde06a5e24453ca7",
+        "asset": "50106861853001467302338274331473363154038812046793085791870045153044329708467",
+        "conditionId": "0xff7c9119d5e07b73140a6145b2032e7ecf6f0ca59d7ade84834a145a09e1d71f",
+        "size": 120702.4,
+        "avgPrice": 0.571594,
+        "initialValue": 68992.7676256,
+        "currentValue": 93604.7112,
+        "cashPnl": 24611.943574399993,
+        "percentPnl": 35.67322260205669,
+        "totalBought": 158856.47,
+        "realizedPnl": 14555.112144,
+        "percentRealizedPnl": 3.0873097596209296,
+        "curPrice": 0.7755,
+        "redeemable": false,
+        "mergeable": false,
+        "title": "Will Ethereum dip to $3,000 by December 31?",
+        "slug": "will-ethereum-dip-to-3000-by-december-31",
+        "icon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/ETH+fullsize.jpg",
+        "eventId": "16097",
+        "eventSlug": "what-price-will-ethereum-hit-in-2025",
+        "outcome": "Yes",
+        "outcomeIndex": 0,
+        "oppositeOutcome": "No",
+        "oppositeAsset": "7172011798811051428977311062544738048993878597785125673427333798291114191350",
+        "endDate": "2026-01-01",
+        "negativeRisk": false
+    }
+```
+
+* from this reponse, this is what we should do : 
+* we should populate the position details[with caution as not all details can be consumed directly from the API]
+* we should populate the details about the event
+* we should populate the details about the market
+
+I have designed the tables like these :
+
+```python
+"""
+Market model for tracking individual prediction markets.
+"""
+from django.db import models
+from django.utils import timezone
+
+
+class Market(models.Model):
+    """
+    Markets represent individual prediction questions within events.
+    """
+
+    # Primary key
+    marketsid = models.BigAutoField(primary_key=True)
+
+    # Foreign key to events
+    eventsid = models.ForeignKey(
+        'events.Event',
+        on_delete=models.CASCADE,
+        related_name='markets',
+        db_column='eventsid',
+        help_text="Event this market belongs to"
+    )
+
+    # Market identification
+    marketid = models.BigIntegerField(
+        db_index=True,
+        help_text="Market identifier"
+    )
+
+    marketslug = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="URL-friendly market identifier"
+    )
+
+    platformmarketid = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="Market ID on the platform"
+    )
+
+    # Market details
+    question = models.TextField(
+        help_text="Market question/prediction"
+    )
+
+    # Timestamps
+    startdate = models.DateTimeField(
+        help_text="Market start date"
+    )
+
+    enddate = models.DateTimeField(
+        help_text="Market end date"
+    )
+
+    marketcreatedat = models.DateTimeField(
+        help_text="When market was created on platform"
+    )
+
+    closedtime = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When market was closed"
+    )
+
+    # Financial metrics
+    volume = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        help_text="Trading volume in USD"
+    )
+
+    liquidity = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        help_text="Market liquidity in USD"
+    )
+
+    # Record timestamps
+    createdat = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When record was created"
+    )
+
+    lastupdatedat = models.DateTimeField(
+        auto_now=True,
+        help_text="Last update timestamp"
+    )
+
+    # Platform
+    platform = models.CharField(
+        max_length=50,
+        default='polymarket',
+        db_index=True,
+        help_text="Trading platform"
+    )
+
+    class Meta:
+        db_table = 'markets'
+        verbose_name = 'Market'
+        verbose_name_plural = 'Markets'
+        ordering = ['-marketcreatedat']
+
+        indexes = [
+            models.Index(fields=['eventsid', 'marketid']),
+            models.Index(fields=['marketslug']),
+            models.Index(fields=['platformmarketid']),
+            models.Index(fields=['platform']),
+            models.Index(fields=['startdate', 'enddate']),
+        ]
+
+    def __str__(self):
+        return f"{self.question[:50]}... ({self.marketslug})"
+
+    def __repr__(self):
+        return f"<Market: {self.marketsid} - {self.marketslug}>"
+
+    @property
+    def volume_formatted(self):
+        """Format volume with commas"""
+        return f"${self.volume:,.2f}"
+
+    @property
+    def liquidity_formatted(self):
+        """Format liquidity with commas"""
+        return f"${self.liquidity:,.2f}"
+
+    @property
+    def is_closed(self):
+        """Check if market is closed"""
+        return self.closedtime is not None
+
+```
+
+
+```python
+"""
+Position model for tracking trader positions in markets.
+"""
+from django.db import models
+
+
+class Position(models.Model):
+    """
+    Positions represent a trader's stake in a specific market outcome.
+    """
+
+    # Primary key
+    positionid = models.BigAutoField(primary_key=True)
+
+    # Foreign key to markets
+    marketsid = models.ForeignKey(
+        'markets.Market',
+        on_delete=models.CASCADE,
+        related_name='positions',
+        db_column='marketsid',
+        help_text="Market this position belongs to"
+    )
+
+    # Wallet identification
+    walletid = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="Wallet address of position holder"
+    )
+
+    # Position details
+    outcome = models.CharField(
+        max_length=100,
+        help_text="Predicted outcome (Yes/No/etc.)"
+    )
+
+    positionstatus = models.SmallIntegerField(
+        db_index=True,
+        help_text="Position status (0=closed, 1=open, etc.)"
+    )
+
+    # Position metrics
+    totalshares = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        help_text="Total shares held"
+    )
+
+    averageentryprice = models.DecimalField(
+        max_digits=10,
+        decimal_places=6,
+        help_text="Average entry price per share"
+    )
+
+    # Financial details
+    amountspent = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        help_text="Total amount spent in USD"
+    )
+
+    amounttakenout = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        help_text="Amount withdrawn/cashed out in USD"
+    )
+
+    amountremaining = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        help_text="Amount remaining/current value in USD"
+    )
+
+    pnl = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        help_text="Profit and Loss in USD"
+    )
+
+    # Market context
+    oppositeoutcome = models.CharField(
+        max_length=100,
+        help_text="The opposite outcome option"
+    )
+
+    title = models.CharField(
+        max_length=500,
+        help_text="Market/position title"
+    )
+
+    negativerisk = models.BooleanField(
+        default=False,
+        help_text="Whether this is a negative risk position"
+    )
+
+    class Meta:
+        db_table = 'positions'
+        verbose_name = 'Position'
+        verbose_name_plural = 'Positions'
+        ordering = ['-positionid']
+
+        indexes = [
+            models.Index(fields=['marketsid', 'walletid']),
+            models.Index(fields=['walletid', 'positionstatus']),
+            models.Index(fields=['positionstatus']),
+            models.Index(fields=['outcome']),
+        ]
+
+    def __str__(self):
+        return f"{self.walletid[:10]}... - {self.outcome} on {self.title[:30]}..."
+
+    def __repr__(self):
+        return f"<Position: {self.positionid} - {self.walletid}>"
+
+    @property
+    def pnl_formatted(self):
+        """Format P&L with + or - sign"""
+        if self.pnl >= 0:
+            return f"+${self.pnl:,.2f}"
+        return f"-${abs(self.pnl):,.2f}"
+
+    @property
+    def roi_percentage(self):
+        """Calculate ROI percentage"""
+        if self.amountspent > 0:
+            return (self.pnl / self.amountspent) * 100
+        return 0
+
+    @property
+    def is_open(self):
+        """Check if position is currently open"""
+        return self.positionstatus == 1
+
+    @property
+    def current_value_formatted(self):
+        """Format current remaining amount"""
+        return f"${self.amountremaining:,.2f}"
+
+```
+
+
+```python
+"""
+Event model for tracking prediction market events.
+"""
+from django.db import models
+from django.utils import timezone
+
+
+class Event(models.Model):
+    """
+    Events represent prediction market events/groups on PolyMarket.
+    """
+
+    # Primary key
+    eventid = models.BigAutoField(primary_key=True)
+
+    # Event identification
+    eventslug = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="URL-friendly event identifier"
+    )
+
+    platformeventid = models.BigIntegerField(
+        db_index=True,
+        help_text="Event ID on the platform (e.g., PolyMarket)"
+    )
+
+    # Event details
+    title = models.CharField(
+        max_length=500,
+        help_text="Event title"
+    )
+
+    description = models.TextField(
+        help_text="Event description"
+    )
+
+    # Financial metrics
+    liquidity = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        help_text="Total liquidity in USD"
+    )
+
+    volume = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        help_text="Total trading volume in USD"
+    )
+
+    openInterest = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        help_text="Open interest in USD",
+        db_column='openInterest'
+    )
+
+    # Market metadata
+    marketcreatedat = models.DateTimeField(
+        help_text="When market was created on platform"
+    )
+
+    marketupdatedat = models.DateTimeField(
+        help_text="When market was last updated on platform"
+    )
+
+    competitive = models.DecimalField(
+        max_digits=10,
+        decimal_places=6,
+        help_text="Competitive metric/score"
+    )
+
+    negrisk = models.SmallIntegerField(
+        help_text="Negative risk indicator (0/1)"
+    )
+
+    # Timestamps
+    startdate = models.DateTimeField(
+        help_text="Event start date"
+    )
+
+    creationdate = models.DateTimeField(
+        default=timezone.now,
+        help_text="Record creation date"
+    )
+
+    # Platform
+    platform = models.CharField(
+        max_length=50,
+        default='polymarket',
+        db_index=True,
+        help_text="Trading platform"
+    )
+
+    class Meta:
+        db_table = 'events'
+        verbose_name = 'Event'
+        verbose_name_plural = 'Events'
+        ordering = ['-marketcreatedat']
+
+        indexes = [
+            models.Index(fields=['eventslug']),
+            models.Index(fields=['platformeventid']),
+            models.Index(fields=['platform']),
+            models.Index(fields=['startdate']),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.eventslug})"
+
+    def __repr__(self):
+        return f"<Event: {self.eventid} - {self.eventslug}>"
+
+    @property
+    def volume_formatted(self):
+        """Format volume with commas"""
+        return f"${self.volume:,.2f}"
+
+    @property
+    def liquidity_formatted(self):
+        """Format liquidity with commas"""
+        return f"${self.liquidity:,.2f}"
+
+```
+
+
+Now here is the main issue: what information from the API can be stored in the position, events and market table?
+
+1. what information can be stored in the positions table ?
+* proxy wallet
+* condition id - this is market id from the polymarket - although we store the market id which is FK from the markets table, lets have a column in the position table to store the market id to avoid unnessary joins
+* store 'avgPrice' as 'averageentryprice'
+- when it comes to a certain position we need these things to be in proper shape:
+1. The total amount invested:
+in order to find this there are two possible ways:
+ - get all the trades the corresponding user has taken corresponding to that market, store it somewhere else and find out the total amount[which is uncessary here]
+- or we could use the information from the API - [totalBought * avgPrice]
+we can go with the information from the API
+conclusion : so we set totalamount from the information from the API in the 'amount spent' column
+2. The remaining value of the position[the user could have sold some amount or could have held]:
+for this there are two ways too:
+ - get all the trades the corresponding user has taken corresponding to that market, store it somewhere else and find out the total amount[which is uncessary here]
+- use the 'currentValue' from the positions API
+conclusion : we set the 'currentValue' from the positions API in the amount remaining column 
+3. Total amount taken out[amount by selling the shares]:
+ - get all the trades the corresponding user has taken corresponding to that market, store it somewhere else and find out the amount that was sold.
+conclusion : as getting all the trades is the only way - we need to implement a process to:
+- get the trades from the API
+- store it in a separate table
+- update the details the from the trades table into the positions table in a regular interval
+
+Okay, for this we need to create a separate batch table where we need to store the latest fetch time of trades corresponding to certain markets and wallets
+this is how the table could look:
+batchid -  pk of the table
+walletid - fk from the wallets table
+marketid - fk from the markets table
+latestfetchedtime - timestamp -  to denote the latest fetch time of trades for a certain market for a certain wallet
+isactive - integer column to denote the status of fetching
+
+but comes a another problem :
+- when it comes to finding the total amount taken out, its not possible to calculate the total amount when it comes to a certain position
+- because of these concepts - usually in polymarket, there are five type of trades
+1. buy - it will contain the amt of shares being bought, avg price, amount spent to buy those shares etc etc
+2. sell - it will contain the amt of shares being sold, avg price, amount received to sell those shares etc etc
+3. redeem - the amount received in terms of usdc when someone wins a bet
+4. merge - this happen when you merge 1 share of yes and 1 share of no of a certain market to get 1 udsc - this is where the problem arises, whenever you merge 1 share of yes and 1 share of no, in the /trades API, it only shows the amount of usdc we received out of that merge- not the prices of yes or no at the time when the shares were merged - making it hard to figure out the amount taken for exact outcome
+5. split - this happens when a certain amount of usdc to spent to buy equal amount of yes shares and no shares of certain event.
+for example : lets say the event is:
+- will x grow in this month?
+the markets could be :
+- will it grow by 2%? - yes, no
+- will it grow by 4%? - yes, no
+- will it grow by 8%? - yes, no
+
+now a spilt of 10 usd on the market - '- will it grow by 2%? - yes, no' --> will buy 10 shares of yes and 10 shares of no in this market.
+but the main problem is that, in the API, only the shares bought will be represented not the price of the yes or no when the split happened - due to this finding the exact amount taken out for certain position becomes challenging.
+
+
+Conclusion :  due to this we are certain that we cant find the pnl or the amount taken out for a certain position[debate me if that can be done], so we need to find the amount taken out and pnl market wise.
+
+so considering this, this is how the table needs to be built:
+
+1. event id - FK of events table
+2. market id - FK of markets table
+3. invested amount
+4. current value
+5. total shares - from the positions API
+6. current shares - from the positions API
+7. calculated invested amount[market wise] - calculated from the trades we store in a separate table 
+8. calculated current value
+9. calculated amount out
+10. rpnl[marketwise]
+11. upnl[marketwise]
+12. outcome
+13. opppsite outcome
+14. end date
+15. createdat
+16. lastupdatedat
+17. avg entry price
+18. title
+19. negrisk
+
+_________________
+
+Now that we are clear with how to store the open posistions into the position table, we still need two pending things that needs to be sorted :
+
+1. How do we store the closed positions? [all the bets the user has taken that has lead to the overall pnl]  
+2. How do we design the trades table
+
+-------------------
+[MAIN] Now lets discuss -  how we should store the closed positions:
+
+- poly market provides us with a separate API to get all the closed positions
+- this is the API. : https://data-api.polymarket.com/closed-positions?user=0xf705fa045201391d9632b7f3cde06a5e24453ca7
+- this is the response : 
+[
+    {
+        "proxyWallet": "0xf705fa045201391d9632b7f3cde06a5e24453ca7",
+        "asset": "25598845035643939672778958313323708029140020250453648233738846882994288649810",
+        "conditionId": "0x9268579e42702d8ad8a514217374ae8da97728f02eccb9544b8bfac3bcf37f17",
+        "avgPrice": 0.07,
+        "totalBought": 3750.85,
+        "realizedPnl": 1640.85458,
+        "curPrice": 0.0825,
+        "title": "Will Solana dip to $100 in November?",
+        "slug": "will-solana-dip-to-100-in-november-2025",
+        "icon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/SOL-logo.png",
+        "eventSlug": "what-price-will-solana-hit-in-november-2025",
+        "outcome": "Yes",
+        "outcomeIndex": 0,
+        "oppositeOutcome": "No",
+        "oppositeAsset": "75114058291173150671878525771431134065395402589457136923083203491107903987617",
+        "endDate": "2025-12-01T00:00:00Z",
+        "timestamp": 1763518681
+    }
+]
+
+[question] :  now we need to decide how are we going to place the values from this API onto position,events and market table table.
+
+[position]
+1. event id - FK of events table
+2. market id - FK of markets table
+3. invested amount = totalBought * avgPrice
+4. current value =0
+5. total shares  =0 
+6. current shares =0 
+7. calculated invested amount[market wise] - calculated from the trades we store in a separate table 
+8. calculated current value[market wise] - calculated from the trades we store in a separate table 
+9. calculated amount out[market wise] - calculated from the trades we store in a separate table 
+10. rpnl[marketwise]
+11. upnl[marketwise]
+12. outcome
+13. opppsite outcome
+14. end date
+15. createdat
+16. lastupdatedat
+17. avg entry price
+18. title
+19. negrisk
+
+[event]
+1. we can just place the event slug in the events table if it doesnt exist
+
+[market]
+1. we can place the  condition id and slug in the market table
+
+[Problem] :  now there is a important problem here:
+- in case of closed positions API, we get realized pnl - until now we know not to trust this - but there are different cases when it comes to closed positions
+
+case 1 : a wallet has traded only one out come of a certain position and has closed that position
+
+- in this case we wont get the trades and there wont be any merges or split- so in this case we need to store that realized pnl
+
+
+case 2 : a wallet has traded both of the outcomes of a certain market and closed both of these positions
+
+- in this case, as both of the positions are closed we wont get thier trades to calculate,
+so in this case we need to store the pnl from the API and while reporting we need to show the pnl market wise so that even if there are merges and splits the pnl marketwise will be right
+
+case 3: a wallet has traded both of the outcomes of a certain market and one of it is closed and one is still open
+
+- in this case, we will take the trades of that market as one outcome is still open - so we still store the details from the API but still we will get the trades and calculate the amount 
+
+conclusion : so we introduce two columns
+- realized pnl :  store the vlaue from the API
+- amount out : realized pnl + totalBought * avgPrice
+
+
+
+
+
+
+
+
+
+
+
+
+
+
