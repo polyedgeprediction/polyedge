@@ -12,6 +12,7 @@ from positions.implementations.polymarket.Constants import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY_SECONDS
 )
+from positions.pojos.PolymarketPositionResponse import PolymarketPositionResponse
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class OpenPositionAPI:
         self.maxRetries = maxRetries
         self.retryDelay = retryDelay
 
-    def fetchOpenPositions(self, walletAddress: str) -> List[Dict[str, Any]]:
+    def fetchOpenPositions(self, walletAddress: str) -> List[PolymarketPositionResponse]:
         allPositions = []
         offset = 0
         limit = 500
@@ -50,7 +51,12 @@ class OpenPositionAPI:
             if not positions:
                 break
             
-            allPositions.extend(positions)
+            # Convert API response to POJOs immediately
+            positionPojos = [
+                PolymarketPositionResponse.fromAPIResponse(data, isOpen=True) 
+                for data in positions
+            ]
+            allPositions.extend(positionPojos)
             
             # If we got less than limit, we've reached the end
             if len(positions) < limit:

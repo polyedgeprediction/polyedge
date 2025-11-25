@@ -16,6 +16,7 @@ class Event(models.Model):
     # Event identification
     eventslug = models.CharField(
         max_length=255,
+        unique=True,
         db_index=True,
         help_text="URL-friendly event identifier"
     )

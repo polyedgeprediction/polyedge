@@ -1,5 +1,5 @@
-from django.apps import AppConfig
 import sys
+from django.apps import AppConfig
 
 
 class WalletsConfig(AppConfig):
@@ -10,6 +10,7 @@ class WalletsConfig(AppConfig):
         if 'migrate' not in sys.argv and 'makemigrations' not in sys.argv:
             import os
             if os.environ.get('RUN_MAIN') != 'false':
-                from wallets.Scheduler import WalletScheduler
-                scheduler = WalletScheduler()
-                scheduler.start()
+                from config.scheduler import getScheduler
+                from wallets.Scheduler import configureWalletJobs
+                
+                configureWalletJobs(getScheduler())

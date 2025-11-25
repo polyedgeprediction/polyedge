@@ -68,7 +68,7 @@ class Position(models.Model):
     tradestatus = models.SmallIntegerField(
         db_index=True,
         choices=TradeStatus.choices(),
-        default=TradeStatus.PENDING.value,
+        default=TradeStatus.NEED_TO_PULL_TRADES.value,
         help_text="Trade fetch status"
     )
 

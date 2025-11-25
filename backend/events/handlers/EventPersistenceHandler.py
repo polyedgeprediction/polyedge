@@ -5,21 +5,22 @@ from typing import Dict
 from decimal import Decimal
 from django.utils import timezone
 
-from events.models import Event
+from events.models import Event as EventModel
+from events.pojos.Event import Event
 
 
 class EventPersistenceHandler:
 
     @staticmethod
-    def persistEvents(eventPojos: Dict[str, Dict]) -> Dict[str, Event]:
+    def persistNewEvents(eventPojos: Dict[str, Event]) -> Dict[str, EventModel]:
         if not eventPojos:
             return {}
         
-        Event.objects.bulk_create(
-            [Event(
-                eventslug=eventData['eventSlug'],
+        EventModel.objects.bulk_create(
+            [EventModel(
+                eventslug=eventPojo.eventSlug,
                 platformeventid=0,
-                title=eventData['eventSlug'],
+                title=eventPojo.eventSlug,
                 description="",
                 liquidity=Decimal('0'),
                 volume=Decimal('0'),
@@ -30,15 +31,13 @@ class EventPersistenceHandler:
                 negrisk=0,
                 startdate=timezone.now(),
                 platform='polymarket'
-            ) for eventData in eventPojos.values()],
-            update_conflicts=True,
-            update_fields=[],
-            unique_fields=['eventslug'],
+            ) for eventPojo in eventPojos.values()],
+            ignore_conflicts=True,
             batch_size=500
         )
         
         return {
             e.eventslug: e 
-            for e in Event.objects.filter(eventslug__in=eventPojos.keys())
+            for e in EventModel.objects.filter(eventslug__in=eventPojos.keys())
         }
 
