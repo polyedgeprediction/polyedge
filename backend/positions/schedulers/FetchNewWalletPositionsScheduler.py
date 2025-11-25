@@ -1,6 +1,4 @@
-"""
-Scheduler for fetching positions for new wallets.
-"""
+
 import logging
 from typing import Dict, List
 from decimal import Decimal
@@ -11,6 +9,10 @@ from wallets.models import Wallet
 from wallets.enums import WalletType
 from positions.implementations.polymarket.OpenPositionAPI import OpenPositionAPI
 from positions.implementations.polymarket.ClosedPositionAPI import ClosedPositionAPI
+from positions.pojos.PolymarketPositionResponse import PolymarketPositionResponse
+from positions.pojos.Position import Position
+from markets.pojos.Market import Market
+from events.pojos.Event import Event
 from events.handlers.EventPersistenceHandler import EventPersistenceHandler
 from markets.handlers.MarketPersistenceHandler import MarketPersistenceHandler
 from positions.handlers.PositionPersistenceHandler import PositionPersistenceHandler
@@ -45,14 +47,14 @@ class FetchNewWalletPositionsScheduler:
         for wallet in newWallets:
             try:
                 # Process open positions
-                openPositionsData = scheduler.openPositionAPI.fetchOpenPositions(wallet.proxywallet)
-                openEventPojos = scheduler.buildEventPojo(openPositionsData, isOpen=True)
-                scheduler.persistEventPojo(wallet, openEventPojos)
+                openPositions = scheduler.openPositionAPI.fetchOpenPositions(wallet.proxywallet)
+                openEvents = scheduler.buildEvent(openPositions)
+                scheduler.persistEvent(wallet, openEvents)
                 
                 # Process closed positions
-                closedPositionsData = scheduler.closedPositionAPI.fetchClosedPositions(wallet.proxywallet)
-                closedEventPojos = scheduler.buildEventPojo(closedPositionsData, isOpen=False)
-                scheduler.persistEventPojo(wallet, closedEventPojos)
+                closedPositions = scheduler.closedPositionAPI.fetchClosedPositions(wallet.proxywallet)
+                closedEvents = scheduler.buildEvent(closedPositions)
+                scheduler.persistEvent(wallet, closedEvents)
                 
                 # Mark wallet as OLD
                 wallet.wallettype = WalletType.OLD
@@ -78,91 +80,101 @@ class FetchNewWalletPositionsScheduler:
             walletsFailed
         )
 
-    def buildEventPojo(self, apiData: List[Dict], isOpen: bool) -> Dict[str, Dict]:
-        events: Dict[str, Dict] = {}
+        return {
+            'success': True,
+            'walletsProcessed': walletsProcessed,
+            'walletsSucceeded': walletsSucceeded,
+            'walletsFailed': walletsFailed
+        }
+
+    def buildEvent(self, positions: List[PolymarketPositionResponse]) -> Dict[str, Event]:
+        events: Dict[str, Event] = {}
         
-        for data in apiData:
+        for position in positions:
             try:
-                eventSlug = data['eventSlug']
-                conditionId = data['conditionId']
-                endDate = self._parseDate(data.get('endDate'))
+                eventSlug = position.eventSlug
+                conditionId = position.conditionId
+                endDate = self._parseDate(position.endDate)
+                isOpen = position.size is not None
                 
+                # Create Event if doesn't exist
                 if eventSlug not in events:
-                    events[eventSlug] = {
-                        'eventSlug': eventSlug,
-                        'markets': {}
-                    }
+                    events[eventSlug] = Event(eventSlug=eventSlug)
                 
-                if conditionId not in events[eventSlug]['markets']:
-                    events[eventSlug]['markets'][conditionId] = {
-                        'conditionId': conditionId,
-                        'marketSlug': data.get('slug', ''),
-                        'question': data['title'],
-                        'endDate': endDate,
-                        'isOpen': isOpen,
-                        'positions': []
-                    }
+                # Create Market if doesn't exist
+                if conditionId not in events[eventSlug].markets:
+                    market = Market(
+                        conditionId=conditionId,
+                        marketSlug=position.slug,
+                        question=position.title,
+                        endDate=endDate,
+                        isOpen=isOpen
+                    )
+                    events[eventSlug].addMarket(conditionId, market)
                 
-                avgPrice = Decimal(str(data.get('avgPrice', 0)))
-                totalBought = Decimal(str(data.get('totalBought', 0)))
-                
+                # Create Position
                 if isOpen:
-                    currentShares = Decimal(str(data.get('size', 0)))
-                    currentValue = Decimal(str(data.get('currentValue', 0)))
-                    positionData = {
-                        'outcome': data['outcome'],
-                        'oppositeOutcome': data['oppositeOutcome'],
-                        'title': data['title'],
-                        'totalShares': totalBought,
-                        'currentShares': currentShares,
-                        'averageEntryPrice': avgPrice,
-                        'amountSpent': totalBought * avgPrice,
-                        'amountRemaining': currentValue,
-                        'apiRealizedPnl': None,
-                        'endDate': endDate,
-                        'negativeRisk': data.get('negativeRisk', False),
-                        'isOpen': True
-                    }
+                    position = Position(
+                        outcome=position.outcome,
+                        oppositeOutcome=position.oppositeOutcome,
+                        title=position.title,
+                        totalShares=position.totalBought,
+                        currentShares=position.size,
+                        averageEntryPrice=position.avgPrice,
+                        amountSpent=position.totalBought * position.avgPrice,
+                        amountRemaining=position.currentValue,
+                        apiRealizedPnl=None,
+                        endDate=endDate,
+                        negativeRisk=position.negativeRisk,
+                        isOpen=True
+                    )
                 else:
-                    positionData = {
-                        'outcome': data['outcome'],
-                        'oppositeOutcome': data['oppositeOutcome'],
-                        'title': data['title'],
-                        'totalShares': totalBought,
-                        'currentShares': Decimal('0'),
-                        'averageEntryPrice': avgPrice,
-                        'amountSpent': totalBought * avgPrice,
-                        'amountRemaining': Decimal('0'),
-                        'apiRealizedPnl': Decimal(str(data.get('realizedPnl', 0))),
-                        'endDate': endDate,
-                        'negativeRisk': data.get('negativeRisk', False),
-                        'isOpen': False
-                    }
+                    position = Position(
+                        outcome=position.outcome,
+                        oppositeOutcome=position.oppositeOutcome,
+                        title=position.title,
+                        totalShares=position.totalBought,
+                        currentShares=Decimal('0'),
+                        averageEntryPrice=position.avgPrice,
+                        amountSpent=position.totalBought * position.avgPrice,
+                        amountRemaining=Decimal('0'),
+                        apiRealizedPnl=position.realizedPnl,
+                        endDate=endDate,
+                        negativeRisk=position.negativeRisk,
+                        isOpen=False
+                    )
                 
-                events[eventSlug]['markets'][conditionId]['positions'].append(positionData)
+                events[eventSlug].markets[conditionId].addPosition(position)
                 
             except Exception as e:
                 logger.info("FETCH_NEW_WALLET_POSITIONS_SCHEDULER :: Error building POJO: %s", str(e))
         
         return events
 
-    def persistEventPojo(self, wallet: Wallet, eventPojos: Dict[str, Dict]) -> None:
-        if not eventPojos:
+    def persistEvent(self, wallet: Wallet, events: Dict[str, Event]) -> None:
+        if not events:
             return
         
         with transaction.atomic():
-            # Step 1: Persist Events
-            eventLookup = EventPersistenceHandler.persistEvents(eventPojos)
+            # Step 1: Persist Events - Event → Markets
+            eventLookup = EventPersistenceHandler.persistNewEvents(events)
             
-            # Step 2: Persist Markets
-            marketLookup = MarketPersistenceHandler.persistMarkets(eventPojos, eventLookup)
+            # Step 2: Persist Markets - Markets → Positions
+            marketLookup = MarketPersistenceHandler.persistNewMarkets(events, eventLookup)
             
-            # Step 3: Persist Positions
-            PositionPersistenceHandler.persistPositions(wallet, eventPojos, marketLookup)
+            # Step 3: Persist Positions - Positions → Wallets
+            PositionPersistenceHandler.persistNewPositions(wallet, events, marketLookup)
 
     def _parseDate(self, dateStr: str):
-        """Parse date string safely."""
+        """Parse date string safely and make it timezone-aware (UTC)."""
         try:
-            return date_parser.parse(dateStr) if dateStr else None
+            if not dateStr:
+                return None
+            parsed_date = date_parser.parse(dateStr)
+            # Make timezone-aware if naive, assuming UTC
+            if parsed_date.tzinfo is None:
+                from django.utils import timezone
+                parsed_date = timezone.make_aware(parsed_date, timezone=timezone.utc)
+            return parsed_date
         except Exception:
             return None

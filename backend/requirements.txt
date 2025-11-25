@@ -8,3 +8,4 @@ sqlparse==0.5.3
 requests==2.32.5
 APScheduler==3.10.4
 django-apscheduler==0.7.0
+python-dateutil==2.9.0

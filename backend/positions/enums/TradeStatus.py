@@ -6,12 +6,10 @@ class TradeStatus(IntEnum):
     Enum for trade fetch status.
     Tracks the state of trade data synchronization for positions.
     """
-    PENDING = 1
-    NEED_TO_PULL_TRADES = 2
-    TRADES_PULLED = 3
-    POSITION_CLOSED_NEED_DATA = 4
-    ERROR = 5
-
+    NEED_TO_PULL_TRADES = 1
+    POSITION_CLOSED = 2
+    POSITION_CLOSED_NEED_DATA = 3
+    
     @classmethod
     def choices(cls):
         """Returns choices tuple for Django model field"""
