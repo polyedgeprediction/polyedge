@@ -7,7 +7,7 @@ from datetime import datetime
 
 
 @dataclass
-class ApiResponse:
+class APIResponse:
     """Standard API response structure"""
     success: bool
     message: str
@@ -36,11 +36,11 @@ class ApiResponse:
         return result
 
     @staticmethod
-    def success(message: str, data: Any = None) -> 'ApiResponse':
+    def success(message: str, data: Any = None) -> 'APIResponse':
         """Create successful response"""
-        return ApiResponse(success=True, message=message, data=data)
+        return APIResponse(success=True, message=message, data=data)
 
     @staticmethod
-    def error(message: str, data: Any = None) -> 'ApiResponse':
+    def error(message: str, data: Any = None) -> 'APIResponse':
         """Create error response"""
-        return ApiResponse(success=False, message=message, data=data)
+        return APIResponse(success=False, message=message, data=data)

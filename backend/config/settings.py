@@ -44,9 +44,10 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django_apscheduler',
+    'django_apscheduler',           # Keep for Django integration
     'rest_framework',
     'corsheaders',
+    'config.apps.ConfigConfig',     # FIRST - handles scheduler initialization
     'wallets',
     'markets',
     'trades',
@@ -132,7 +133,7 @@ TIME_ZONE = 'UTC'
 
 USE_I18N = True
 
-USE_TZ = True
+USE_TZ = False
 
 
 # Static files (CSS, JavaScript, Images)

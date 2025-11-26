@@ -174,7 +174,8 @@ class FetchNewWalletPositionsScheduler:
             # Make timezone-aware if naive, assuming UTC
             if parsed_date.tzinfo is None:
                 from django.utils import timezone
-                parsed_date = timezone.make_aware(parsed_date, timezone=timezone.utc)
+                import datetime
+                parsed_date = timezone.make_aware(parsed_date, datetime.timezone.utc)
             return parsed_date
         except Exception:
             return None

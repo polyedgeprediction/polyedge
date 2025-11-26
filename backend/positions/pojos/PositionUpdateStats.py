@@ -34,6 +34,7 @@ class SchedulerExecutionStats:
     totalUpdated: int = 0
     totalMarkedClosed: int = 0
     totalReopened: int = 0
+    totalCreated: int = 0
     errors: List[str] = None
     success: bool = True
     message: str = None
@@ -51,6 +52,7 @@ class SchedulerExecutionStats:
             self.totalUpdated += walletStats.updated
             self.totalMarkedClosed += walletStats.markedClosed
             self.totalReopened += walletStats.reopened
+            self.totalCreated += getattr(walletStats, 'created', 0)  # Handle backward compatibility
         else:
             self.walletsFailed += 1
             if walletStats.errorMessage:
@@ -62,7 +64,7 @@ class SchedulerExecutionStats:
 
     def getTotalChanges(self) -> int:
         """Get total number of position changes across all wallets"""
-        return self.totalUpdated + self.totalMarkedClosed + self.totalReopened
+        return self.totalUpdated + self.totalMarkedClosed + self.totalReopened + self.totalCreated
 
     def getSuccessRate(self) -> float:
         """Calculate success rate percentage"""
@@ -84,6 +86,7 @@ class SchedulerExecutionStats:
             f"• Positions updated: {self.totalUpdated}\n"
             f"• Positions marked closed: {self.totalMarkedClosed}\n"
             f"• Positions reopened: {self.totalReopened}\n"
+            f"• Positions created: {self.totalCreated}\n"
             f"• Total changes: {self.getTotalChanges()}"
         )
         
@@ -115,6 +118,7 @@ class PositionUpdateResult:
     updated: int = 0
     markedClosed: int = 0
     reopened: int = 0
+    created: int = 0
     
     def toWalletStats(self, walletId: int, walletAddress: str) -> WalletUpdateStats:
         """Convert to WalletUpdateStats"""
@@ -126,3 +130,7 @@ class PositionUpdateResult:
             reopened=self.reopened,
             success=True
         )
+    
+    def getTotalChanges(self) -> int:
+        """Get total number of position changes"""
+        return self.updated + self.markedClosed + self.reopened + self.created

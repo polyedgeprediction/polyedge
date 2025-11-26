@@ -22,12 +22,6 @@ class PositionUpdatesScheduler:
 
     @staticmethod
     def execute() -> SchedulerExecutionStats:
-        """
-        Main execution method for position updates.
-        
-        Returns:
-            SchedulerExecutionStats with execution results
-        """
         logger.info("POSITION_UPDATES_SCHEDULER :: Started")
         
         # Get all OLD wallets (wallets that have been processed before)
@@ -75,13 +69,14 @@ class PositionUpdatesScheduler:
         logger.info(
             "POSITION_UPDATES_SCHEDULER :: Completed | "
             "Processed: %d | Succeeded: %d | Failed: %d | "
-            "Total Updated: %d | Total Closed: %d | Total Reopened: %d",
+            "Total Updated: %d | Total Closed: %d | Total Reopened: %d | Total Created: %d",
             executionStats.walletsProcessed,
             executionStats.walletsSucceeded, 
             executionStats.walletsFailed,
             executionStats.totalUpdated,
             executionStats.totalMarkedClosed,
-            executionStats.totalReopened
+            executionStats.totalReopened,
+            executionStats.totalCreated
         )
         
         return executionStats
