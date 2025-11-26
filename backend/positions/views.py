@@ -9,7 +9,6 @@ from django.utils.decorators import method_decorator
 
 from positions.schedulers.FetchNewWalletPositionsScheduler import FetchNewWalletPositionsScheduler
 from positions.schedulers.PositionUpdatesScheduler import PositionUpdatesScheduler
-from positions.pojos.ApiResponse import ApiResponse
 
 logger = logging.getLogger(__name__)
 

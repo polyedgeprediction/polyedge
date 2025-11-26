@@ -68,7 +68,7 @@ class PositionPersistenceHandler:
         """
         Update all positions for a wallet efficiently with single API fetch, single DB fetch, and single bulk update.
         
-        THREE UPDATE CASES HANDLED:
+        FOUR UPDATE CASES HANDLED:
         
         CASE 1: Position exists in API AND exists as OPEN in DB
         → Check if values changed (shares, price, current value)
@@ -85,18 +85,10 @@ class PositionPersistenceHandler:
         → Update position fields from API + Set positionstatus = OPEN + Set tradestatus = NEED_TO_PULL_TRADES
         → This handles the rare case where user exits and re-enters same position
         
-        EFFICIENCY DESIGN:
-        • Single API fetch (passed as parameter)
-        • Single DB query for open positions  
-        • Single additional DB query for closed positions (only if Case 3 is needed)
-        • Single bulk update for all changes
-        
-        Args:
-            walletId: Database ID of the wallet
-            apiOpenPositions: Pre-fetched list of open positions from API
-            
-        Returns:
-            PositionUpdateResult with update statistics
+        CASE 4: Position exists in API BUT does NOT exist in DB (neither open nor closed)
+        → New position entered by wallet
+        → Create new position record + Set tradestatus = NEED_TO_PULL_TRADES
+        → Requires market lookup/creation if market doesn't exist
         """
         # Fetch current open positions once
         currentOpenPositions = list(PositionModel.objects.filter(
@@ -121,11 +113,15 @@ class PositionPersistenceHandler:
             dbOpenPositionMap, apiPositionMap, positionsToUpdate
         )
         
-        # Case 3: Reopen closed positions (only if needed)
+        # Case 3 & 4: Handle positions in API but not in current open positions
         apiKeysNotInOpen = set(apiPositionMap.keys()) - set(dbOpenPositionMap.keys())
         if apiKeysNotInOpen:
             result.reopened = PositionPersistenceHandler._processReopenedPositions(
                 walletId, apiKeysNotInOpen, apiPositionMap, positionsToUpdate
+            )
+            
+            result.created = PositionPersistenceHandler._processNewPositions(
+                walletId, apiKeysNotInOpen, apiPositionMap
             )
         
         # Single bulk update at the end
@@ -163,16 +159,17 @@ class PositionPersistenceHandler:
         """
         Case 2: Position not in API + Open in DB → Set POSITION_CLOSED_NEED_DATA
         """
-        closedCount = 0
+        # Efficiently find positions that are closed (in DB but not in API)
+        closedPositionKeys = set(dbOpenPositionMap.keys()) - set(apiPositionMap.keys())
         
-        for key, dbPosition in dbOpenPositionMap.items():
-            if key not in apiPositionMap:
-                dbPosition.tradestatus = TradeStatus.POSITION_CLOSED_NEED_DATA
-                dbPosition.lastupdatedat = timezone.now()
-                positionsToUpdate.append(dbPosition)
-                closedCount += 1
+        # Only iterate over positions that are actually closed
+        for key in closedPositionKeys:
+            dbPosition = dbOpenPositionMap[key]
+            dbPosition.tradestatus = TradeStatus.POSITION_CLOSED_NEED_DATA
+            dbPosition.lastupdatedat = timezone.now()
+            positionsToUpdate.append(dbPosition)
         
-        return closedCount
+        return len(closedPositionKeys)
 
     @staticmethod
     def _processReopenedPositions(walletId: int, 
@@ -210,6 +207,43 @@ class PositionPersistenceHandler:
         return reopenedCount
 
     @staticmethod
+    def _processNewPositions(walletId: int,
+                           apiKeysNotInOpen: Set[str], 
+                           apiPositionMap: Dict[str, PolymarketPositionResponse]) -> int:
+        """
+        Case 4: Position in API but does NOT exist in DB → Create new position
+        Follows exact same pattern as FetchNewWalletPositionsScheduler
+        """
+        if not apiKeysNotInOpen:
+            return 0
+            
+        # Find positions that don't exist in database at all
+        allExistingPositions = list(PositionModel.objects.filter(walletsid=walletId))
+        existingPositionMap = PositionPersistenceHandler._createDbPositionMap(allExistingPositions)
+        
+        newPositionKeys = [key for key in apiKeysNotInOpen if key not in existingPositionMap]
+        
+        if not newPositionKeys:
+            return 0
+        
+        # Extract new API positions
+        newApiPositions = [apiPositionMap[key] for key in newPositionKeys]
+        
+        # Follow exact FetchNewWalletPositionsScheduler pattern:
+        # 1. buildEvent() - converts API positions to Event POJOs
+        # 2. persistEvent() - handles Event→Market→Position creation
+        from positions.schedulers.FetchNewWalletPositionsScheduler import FetchNewWalletPositionsScheduler
+        scheduler = FetchNewWalletPositionsScheduler()
+        
+        newEvents = scheduler.buildEvent(newApiPositions)
+        
+        if newEvents:
+            wallet = Wallet.objects.get(walletsid=walletId)
+            scheduler.persistEvent(wallet, newEvents)
+        
+        return len(newPositionKeys)
+
+    @staticmethod
     def _createApiPositionMap(openPositions: List[PolymarketPositionResponse]) -> Dict[str, PolymarketPositionResponse]:
         """Create lookup map: conditionId+outcome -> PolymarketPositionResponse"""
         apiMap = {}
@@ -229,12 +263,8 @@ class PositionPersistenceHandler:
 
     @staticmethod
     def _needsUpdate(dbPosition: PositionModel, apiPosition: PolymarketPositionResponse) -> bool:
-        """
-        Check if database position needs update based on API response.
-        Compare key fields that might change.
-        """
         # Compare total shares (size from API)
-        if abs(float(dbPosition.totalshares) - float(apiPosition.size or 0)) > 0.000001:
+        if abs(float(dbPosition.currentshares) - float(apiPosition.size or 0)) > 0.000001:
             return True
             
         # Compare average entry price
