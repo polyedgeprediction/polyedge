@@ -37,7 +37,7 @@ class PositionUpdatesScheduler:
         # Process each wallet
         for wallet in oldWallets:
             try:
-                walletUpdateStats = scheduler._processWalletUpdates(wallet)
+                walletUpdateStats = scheduler.processWalletUpdates(wallet)
                 executionStats.addWalletStats(walletUpdateStats)
                 
                 logger.info(
@@ -79,9 +79,13 @@ class PositionUpdatesScheduler:
             executionStats.totalCreated
         )
         
+        # Sync missing batch records
+        from trades.schedulers.BatchSyncScheduler import BatchSyncScheduler
+        BatchSyncScheduler.execute()
+        
         return executionStats
 
-    def _processWalletUpdates(self, wallet: Wallet) -> WalletUpdateStats:
+    def processWalletUpdates(self, wallet: Wallet) -> WalletUpdateStats:
         try:
             # Fetch open positions from API once
             apiOpenPositions = self.openPositionAPI.fetchOpenPositions(wallet.proxywallet)

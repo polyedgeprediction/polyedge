@@ -73,6 +73,35 @@ class ClosedPositionAPI:
         
         return allPositions
 
+    def fetchClosedPositionsForMarket(self, walletAddress: str, conditionId: str, offset:int = 0) -> List[PolymarketPositionResponse]:
+        params = {
+            'user': walletAddress,
+            'market': conditionId,
+            'limit': 50,
+            'sortBy': 'TIMESTAMP',
+            'sortDirection': 'DESC'
+        }
+        
+        positions = self._makeRequest(POLYMARKET_CLOSED_POSITIONS_URL, params, walletAddress)
+        
+        if not positions:
+            return []
+        
+        # Convert API response to POJOs
+        positionPojos = [
+            PolymarketPositionResponse.fromAPIResponse(data, isOpen=False) 
+            for data in positions
+        ]
+        
+        logger.info(
+            "CLOSED_POSITION_API :: Fetched %d positions for market | Wallet: %s | Market: %s",
+            len(positionPojos),
+            walletAddress[:10],
+            conditionId[:10]
+        )
+        
+        return positionPojos
+
     def _makeRequest(self, url: str, params: Dict[str, Any], walletAddress: str) -> List[Dict[str, Any]]:
         lastException = None
         

@@ -80,6 +80,10 @@ class FetchNewWalletPositionsScheduler:
             walletsFailed
         )
 
+        # Sync missing batch records
+        from trades.schedulers.BatchSyncScheduler import BatchSyncScheduler
+        BatchSyncScheduler.execute()
+
         return {
             'success': True,
             'walletsProcessed': walletsProcessed,
@@ -162,7 +166,7 @@ class FetchNewWalletPositionsScheduler:
             # Step 2: Persist Markets - Markets → Positions
             marketLookup = MarketPersistenceHandler.persistNewMarkets(events, eventLookup)
             
-            # Step 3: Persist Positions - Positions → Wallets
+            # Step 3: Persist Positions - Positions → Wallets (includes batch creation)
             PositionPersistenceHandler.persistNewPositions(wallet, events, marketLookup)
 
     def _parseDate(self, dateStr: str):
