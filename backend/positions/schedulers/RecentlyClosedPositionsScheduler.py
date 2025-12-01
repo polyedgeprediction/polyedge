@@ -4,22 +4,12 @@ Processes positions with status POSITION_CLOSED_NEED_DATA.
 """
 import logging
 from typing import List, Dict
-from django.db import transaction
-from django.utils import timezone
-
-from backend import trades
-from positions.models import Position as PositionModel
 from positions.enums.TradeStatus import TradeStatus
 from positions.enums.PositionStatus import PositionStatus
 from positions.implementations.polymarket.ClosedPositionAPI import ClosedPositionAPI
 from positions.pojos.PolymarketPositionResponse import PolymarketPositionResponse
 from positions.pojos.Position import Position as PositionPojo
 from positions.handlers.PositionPersistenceHandler import PositionPersistenceHandler
-from wallets.models import Wallet
-from wallets.pojos.WalletWithMarkets import WalletWithMarkets
-from markets.pojos.Market import Market
-from trades.services.TradeProcessingService import TradeProcessingService
-from trades.handlers.TradePersistenceHandler import TradePersistenceHandler
 
 
 logger = logging.getLogger(__name__)
@@ -30,10 +20,9 @@ class RecentlyClosedPositionsScheduler:
         self.closedPositionAPI = ClosedPositionAPI()
 
     @staticmethod
-    def execute() -> None:
+    def execute():
         
         logger.info("RECENTLY_CLOSED_POSITIONS_SCHEDULER :: Started updating closed positions")
-        RecentlyClosedPositionsScheduler.syncClosedPositions()
         RecentlyClosedPositionsScheduler.updateRecentlyClosedPositions()
         logger.info("RECENTLY_CLOSED_POSITIONS_SCHEDULER :: Completed updating closed positions")
 
@@ -173,28 +162,8 @@ class RecentlyClosedPositionsScheduler:
             apiRealizedPnl=apiPosition.realizedPnl,
             endDate=positionPojo.endDate,  # Keep existing endDate
             negativeRisk=positionPojo.negativeRisk,
-            isOpen=False  # Mark as closed
+            tradeStatus=TradeStatus.TRADES_SYNCED,
+            positionStatus=PositionStatus.CLOSED
         )
-
-
-    @staticmethod
-    def syncClosedPositions() -> None:
-        try: 
-            logger.info("RECENTLY_CLOSED_POSITIONS_SCHEDULER :: Started")
-            
-            walletsWithMarkets = TradePersistenceHandler.getWalletsWithMarketsForClosedPositions()
-            
-            if walletsWithMarkets:
-                logger.info("RECENTLY_CLOSED_POSITIONS_SCHEDULER :: Syncing trades for %d wallets", len(walletsWithMarkets))
-                TradeProcessingService.syncTradeForWallets(
-                    walletsWithMarkets, 
-                    TradeStatus.POSITION_CLOSED_NEED_DATA,
-                    TradeStatus.POSITION_CLOSED_TRADES_SYNCED
-                )
-
-            logger.info("RECENTLY_CLOSED_POSITIONS_SCHEDULER :: Completed")
-            
-        except Exception as e:
-            logger.error("RECENTLY_CLOSED_POSITIONS_SCHEDULER :: Failed: %s", str(e), exc_info=True)
 
 

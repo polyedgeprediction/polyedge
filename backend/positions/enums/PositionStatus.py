@@ -11,6 +11,7 @@ class PositionStatus(IntEnum):
     """
     OPEN = 1
     CLOSED = 2
+    CLOSED_NEED_DATA = 3
 
     @classmethod
     def choices(cls):
