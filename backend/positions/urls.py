@@ -7,5 +7,6 @@ from positions import views
 urlpatterns = [
     path('update/', views.updatePositions, name='update-positions'),
     path('newwallet/fetch/', views.fetchNewWalletPositions, name='fetch-new-wallet-positions'),
+    path('recentlyclosed/update/', views.updateRecentlyClosedPositions, name='update-recently-closed-positions'),
 ]
 

@@ -176,7 +176,8 @@ class PositionPersistenceHandler:
         # Only iterate over positions that are actually closed
         for key in closedPositionKeys:
             dbPosition = dbOpenPositionMap[key]
-            dbPosition.tradestatus = TradeStatus.POSITION_CLOSED_NEED_DATA
+            dbPosition.tradestatus = TradeStatus.NEED_TO_PULL_TRADES
+            dbPosition.positionstatus = PositionStatus.CLOSED_NEED_DATA
             dbPosition.lastupdatedat = timezone.now()
             positionsToUpdate.append(dbPosition)
         
@@ -318,7 +319,7 @@ class PositionPersistenceHandler:
     @staticmethod
     def getRecentlyClosedPosition() -> Dict[str, tuple]:
         """
-        Retrieve positions with OPEN status and POSITION_CLOSED_TRADES_SYNCED trade status.
+        Retrieve positions with CLOSED_NEED_DATA status and TRADES_SYNCED trade status.
         Joins Position and Wallet tables to fetch required data efficiently.
         
         Returns:
@@ -353,8 +354,8 @@ class PositionPersistenceHandler:
         
         with connection.cursor() as cursor:
             cursor.execute(query, [
-                PositionStatus.OPEN.value,
-                TradeStatus.POSITION_CLOSED_TRADES_SYNCED.value
+                PositionStatus.CLOSED_NEED_DATA.value,
+                TradeStatus.TRADES_SYNCED.value
             ])
             
             for row in cursor.fetchall():
@@ -379,7 +380,8 @@ class PositionPersistenceHandler:
                     apiRealizedPnl=Decimal(str(row[11])) if row[11] is not None else None,
                     endDate=row[12],
                     negativeRisk=bool(row[13]) if row[13] is not None else False,
-                    isOpen=True  # Always True since we filter for OPEN status
+                    tradeStatus=TradeStatus.TRADES_SYNCED,
+                    positionStatus=PositionStatus.CLOSED
                 )
                 
                 positionMap[mapKey] = (positionId, positionPojo)

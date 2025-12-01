@@ -24,7 +24,7 @@ class TradePersistenceHandler:
     """
     
     @staticmethod
-    def getWalletsWithMarketsNeedingTradeSync() -> List[WalletWithMarkets]:
+    def getWalletsWithMarketsNeedingTradeSync(tradeStatus: TradeStatus) -> List[WalletWithMarkets]:
         """
         Get wallets with their markets that need trade synchronization.
         Returns proper nested POJO structure: Wallet → Markets → Positions + Batch.
@@ -56,7 +56,8 @@ class TradePersistenceHandler:
                 p.apirealizedpnl,
                 p.enddate,
                 p.negativerisk,
-                p.positionstatus
+                p.positionstatus,
+                p.tradestatus
             FROM positions p
             INNER JOIN wallets w ON p.walletsid = w.walletsid
             LEFT JOIN batches b ON p.walletsid = b.walletsid AND p.marketsid = b.marketsid
@@ -65,7 +66,7 @@ class TradePersistenceHandler:
             """
             
             with connection.cursor() as cursor:
-                cursor.execute(query, [TradeStatus.NEED_TO_PULL_TRADES.value])
+                cursor.execute(query, [tradeStatus.value])
                 rows = cursor.fetchall()
             
             # Group data by wallet and build nested structure without duplicates
@@ -92,7 +93,7 @@ class TradePersistenceHandler:
                 endDate = row[17]
                 negativeRisk = row[18]
                 positionStatus = row[19]
-                
+                tradeStatus = row[20]
                 # Get or create wallet POJO
                 if walletId not in walletsData:
                     walletsData[walletId] = WalletWithMarkets(
@@ -130,9 +131,6 @@ class TradePersistenceHandler:
                 # Add position to market
                 market = wallet.getMarket(conditionId)
                 if market:
-                    from positions.enums.PositionStatus import PositionStatus
-                    isOpen = positionStatus == PositionStatus.OPEN.value
-                    
                     position = Position(
                         outcome=outcome,
                         oppositeOutcome=oppositeOutcome,
@@ -145,7 +143,8 @@ class TradePersistenceHandler:
                         apiRealizedPnl=apiRealizedPnl,
                         endDate=endDate,
                         negativeRisk=negativeRisk,
-                        isOpen=isOpen
+                        tradeStatus=tradeStatus,
+                        positionStatus=positionStatus
                     )
                     market.addPosition(position)
             
@@ -472,11 +471,17 @@ class TradePersistenceHandler:
         Calculate PNL for positions with specified status using optimized CTE approach.
         
         Performs atomic financial calculation by:
-        1. Aggregating trade amounts by wallet-market combination
-        2. Calculating invested amount (negative totalamount values)
-        3. Calculating amount out (positive totalamount values)  
-        4. Computing realized PNL as difference
-        5. Updating positions and marking with final status
+        1. Identifying markets that have positions needing PNL calculation
+        2. Aggregating trade amounts by wallet-market combination (market-wise calculation)
+        3. Calculating invested amount (negative totalamount values)
+        4. Calculating amount out (positive totalamount values)  
+        5. Computing realized PNL as difference
+        6. Updating PNL for ALL positions in those markets (both outcomes)
+        7. Updating status ONLY for positions matching filterStatus
+        
+        Key design: 
+        - PNL is calculated and updated market-wise (all positions in market get same PNL)
+        - Status is updated position-wise (only positions matching filterStatus get status update)
         
         Args:
             filterStatus: Status to filter positions for PNL calculation
@@ -491,19 +496,32 @@ class TradePersistenceHandler:
 
             logger.info(f"FETCH_TRADES_SCHEDULER :: Calculating PNL for positions marked for calculation")
             
-            # Optimized CTE-based query for atomic PNL calculation
+            # Highly optimized CTE-based query for atomic PNL calculation
+            # Strategy: 
+            # 1. Identify markets that have positions needing update (by filterStatus)
+            # 2. Calculate PNL market-wise (aggregate trades by walletsid + conditionid)
+            # 3. Update PNL for ALL positions in those markets (both Yes and No outcomes)
+            # 4. Update status ONLY for positions matching filterStatus (using CASE)
             query = """
-                WITH trade_aggregates AS (
+                WITH positions_needing_update AS (
+                    SELECT positionid, walletsid, conditionid
+                    FROM positions
+                    WHERE tradestatus = %s
+                ),
+                markets_to_process AS (
+                    SELECT DISTINCT walletsid, conditionid
+                    FROM positions_needing_update
+                ),
+                trade_aggregates AS (
                     SELECT 
                         t.walletsid,
                         t.conditionid,
                         SUM(CASE WHEN t.totalamount < 0 THEN ABS(t.totalamount) ELSE 0 END) AS total_invested,
                         SUM(CASE WHEN t.totalamount >= 0 THEN t.totalamount ELSE 0 END) AS total_out
                     FROM trades t
-                    INNER JOIN positions p ON 
-                        t.walletsid = p.walletsid 
-                        AND t.conditionid = p.conditionid 
-                    WHERE p.tradestatus = %s
+                    INNER JOIN markets_to_process mtp ON 
+                        t.walletsid = mtp.walletsid 
+                        AND t.conditionid = mtp.conditionid
                     GROUP BY t.walletsid, t.conditionid
                 )
                 UPDATE positions 
@@ -511,18 +529,22 @@ class TradePersistenceHandler:
                     calculatedamountinvested = ta.total_invested,
                     calculatedamountout = ta.total_out,
                     realizedpnl = ta.total_out - ta.total_invested,
-                    tradestatus = %s,
+                    tradestatus = CASE 
+                        WHEN positions.positionid IN (SELECT positionid FROM positions_needing_update) 
+                        THEN %s 
+                        ELSE positions.tradestatus 
+                    END,
                     lastupdatedat = %s
                 FROM trade_aggregates ta
                 WHERE 
                     positions.walletsid = ta.walletsid 
-                    AND positions.conditionid = ta.conditionid 
+                    AND positions.conditionid = ta.conditionid
             """
             
             with connection.cursor() as cursor:
                 cursor.execute(query, [
-                    filterStatus.value,  # Filter condition
-                    finalStatus.value,   # New status
+                    filterStatus.value,  # Filter condition for positions_needing_update CTE
+                    finalStatus.value,   # New status (only for positions matching filterStatus)
                     django_timezone.now()
                 ])
                 

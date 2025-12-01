@@ -6,6 +6,9 @@ from typing import Optional
 from decimal import Decimal
 from datetime import datetime
 
+from positions.enums.TradeStatus import TradeStatus
+from positions.enums.PositionStatus import PositionStatus
+
 
 @dataclass
 class Position:
@@ -20,5 +23,6 @@ class Position:
     apiRealizedPnl: Optional[Decimal]
     endDate: Optional[datetime]
     negativeRisk: bool
-    isOpen: bool
+    tradeStatus: TradeStatus
+    positionStatus: PositionStatus
 

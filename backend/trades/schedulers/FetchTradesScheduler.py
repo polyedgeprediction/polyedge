@@ -2,8 +2,10 @@
 Scheduler for orchestrating the complete trade processing workflow.
 Main entry point that coordinates all trade processing operations.
 """
+from gzip import READ
 import logging
 
+from positions.schedulers.RecentlyClosedPositionsScheduler import RecentlyClosedPositionsScheduler
 from trades.handlers.TradePersistenceHandler import TradePersistenceHandler
 from trades.services.TradeProcessingService import TradeProcessingService
 from positions.enums.TradeStatus import TradeStatus
@@ -18,18 +20,27 @@ class TradeProcessingScheduler:
         
         try:
             logger.info("FETCH_TRADES_SCHEDULER :: Started")
-            walletsWithMarkets = TradePersistenceHandler.getWalletsWithMarketsNeedingTradeSync()
+            walletsWithMarkets = TradePersistenceHandler.getWalletsWithMarketsNeedingTradeSync(TradeStatus.NEED_TO_PULL_TRADES)
             
             if not walletsWithMarkets:
                 logger.info("FETCH_TRADES_SCHEDULER :: No wallets with markets needing trade sync")
-                return
-            
-            TradeProcessingService.syncTradeForWallets(walletsWithMarkets, TradeStatus.NEED_TO_PULL_TRADES, TradeStatus.TRADES_SYNCED)
+            else:
+                TradeProcessingService.syncTradeForWallets(walletsWithMarkets,TradeStatus.NEED_TO_PULL_TRADES, TradeStatus.TRADES_SYNCED)
+                
+            TradePersistenceHandler.bulkUpdatePNL(TradeStatus.NEED_TO_CALCULATE_PNL, TradeStatus.TRADES_SYNCED)
+            TradeProcessingScheduler.updateRecentlyClosedPositions()
 
             logger.info("FETCH_TRADES_SCHEDULER :: Completed")
-            
         except Exception as e:
             logger.error(f"FETCH_TRADES_SCHEDULER :: Critical error: {e}")
             return
 
+    @staticmethod
+    def updateRecentlyClosedPositions():
+        try:
+            logger.info("FETCH_TRADES_SCHEDULER :: Started updating recently closed positions")
+            RecentlyClosedPositionsScheduler.execute()
+            logger.info("FETCH_TRADES_SCHEDULER :: Completed updating recently closed positions")
+        except Exception as e:
+            logger.error(f"FETCH_TRADES_SCHEDULER :: Critical error: {e}")
 

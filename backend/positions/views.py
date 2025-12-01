@@ -9,6 +9,7 @@ from django.utils.decorators import method_decorator
 
 from positions.schedulers.FetchNewWalletPositionsScheduler import FetchNewWalletPositionsScheduler
 from positions.schedulers.PositionUpdatesScheduler import PositionUpdatesScheduler
+from positions.schedulers.RecentlyClosedPositionsScheduler import RecentlyClosedPositionsScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -33,5 +34,38 @@ def fetchNewWalletPositions(request):
         logger.error(f"Error fetching new wallet positions: {str(e)}", exc_info=True)
         return Response(
             {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+def updateRecentlyClosedPositions(request):
+    """
+    Trigger update for recently closed positions.
+    
+    POST /api/positions/recentlyclosed/update
+    
+    Returns:
+        - 200: Update completed successfully
+        - 500: Update failed with error details
+    """
+    try:
+        logger.info("Recently closed positions update API endpoint called")
+        
+        # Execute recently closed positions update
+        RecentlyClosedPositionsScheduler.execute()
+        
+        logger.info("Recently closed positions update completed successfully")
+        return Response(
+            {'message': 'Recently closed positions update completed successfully'}, 
+            status=status.HTTP_200_OK
+        )
+        
+    except Exception as e:
+        error_message = f"Recently closed positions update failed: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        
+        return Response(
+            {'error': error_message}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

@@ -26,29 +26,31 @@ class TradeProcessingService:
     """
     
     @staticmethod
-    def syncTradeForWallets(wallets: List[WalletWithMarkets], finalStatus: TradeStatus, fallbackStatus: TradeStatus) -> None:
+    def syncTradeForWallets(wallets: List[WalletWithMarkets], fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> None:
         """Process trades for all wallets with bulk persistence at the end."""
         for wallet in wallets:
             try:
-                TradeProcessingService.syncTradeForWallet(wallet, finalStatus, fallbackStatus)
+                TradeProcessingService.syncTradeForWallet(wallet, fallbackStatus,finalStatus)
             except Exception as e:
                 logger.info(f"FETCH_TRADES_SCHEDULER :: Failed to process wallet {wallet.walletId}: {e}")
         
         # Single bulk persistence call for all wallets
         TradeProcessingService.persistAggregatedTrades(wallets,finalStatus)
+
+
     
     @staticmethod
-    def syncTradeForWallet(wallet: WalletWithMarkets, finalStatus: TradeStatus, fallbackStatus: TradeStatus) -> None:
+    def syncTradeForWallet(wallet: WalletWithMarkets,fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> None:
         """Process all markets for a single wallet."""
         for market in wallet.markets.values():
             try:
-                TradeProcessingService.syncTradeForMarket(wallet, market, finalStatus, fallbackStatus)
+                TradeProcessingService.syncTradeForMarket(wallet, market, fallbackStatus,finalStatus)
             except Exception as e:
                 logger.info(f"FETCH_TRADES_SCHEDULER :: Failed to process market {market.conditionId} for wallet {wallet.walletId}: {e}")
                 market.markTradeStatus(fallbackStatus)
     
     @staticmethod
-    def syncTradeForMarket(wallet: WalletWithMarkets, market: Market, finalStatus: TradeStatus, fallbackStatus: TradeStatus) -> None:
+    def syncTradeForMarket(wallet: WalletWithMarkets, market: Market, fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> None:
         """Process trades for a single market with real-time aggregation."""
         # Step 1: Fetch trades from API with latest timestamp
         tradesFromAPI, latestTimestamp = TradeProcessingService.fetchTrades(wallet, market)
@@ -144,7 +146,6 @@ class TradeProcessingService:
                 persistedTrades = 0
                 updatedStatuses = 0
                 updatedBatches = 0
-                calculatedPnl = 0
                 
                 # Step 1: Bulk persist trades - most critical operation first
                 if aggregatedTrades:
@@ -154,16 +155,10 @@ class TradeProcessingService:
                 if statusUpdates or batchUpdates:
                     updatedStatuses, updatedBatches = TradePersistenceHandler.bulkUpdateStatusAndTimestamps(statusUpdates, batchUpdates)
                 
-                # Step 3: Calculate PNL for positions marked for calculation
-                calculatedPnl = TradePersistenceHandler.bulkUpdatePNL(
-                    TradeStatus.NEED_TO_CALCULATE_PNL,
-                    finalStatus
-                )
-                
                 logger.info(
                     f"FETCH_TRADES_SCHEDULER :: Complete pipeline executed | "
                     f"Trades: {persistedTrades}, Positions: {updatedStatuses}, "
-                    f"Batches: {updatedBatches}, PNL: {calculatedPnl}"
+                    f"Batches: {updatedBatches}"
                 )
                 
         except Exception as e: 
