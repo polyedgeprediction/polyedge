@@ -22,6 +22,9 @@ def registerAllJobs():
         # Position Jobs  
         _registerPositionJobs(scheduler)
         
+        # Event Jobs
+        _registerEventJobs(scheduler)
+        
         logger.info("SCHEDULER_CONFIG :: All jobs registered successfully")
         
     except Exception as e:
@@ -72,6 +75,22 @@ def _registerPositionJobs(scheduler):
     )
     
     logger.info("SCHEDULER_CONFIG :: Position jobs registered")
+
+
+def _registerEventJobs(scheduler):
+    """Register event-related jobs"""
+    from events.schedulers.UpdateEventsAndMarketsScheduler import UpdateEventsAndMarketsScheduler
+    
+    # Update events and markets every 10 hours
+    scheduler.add_job(
+        id='update_events_and_markets',
+        func=UpdateEventsAndMarketsScheduler.execute,
+        trigger='interval',
+        hours=10,
+        replace_existing=True
+    )
+    
+    logger.info("SCHEDULER_CONFIG :: Event jobs registered")
 
 
 def getJobStatus():
