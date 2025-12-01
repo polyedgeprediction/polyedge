@@ -78,6 +78,14 @@ class Market(models.Model):
         help_text="Market liquidity in USD"
     )
 
+    competitive = models.DecimalField(
+        max_digits=10,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Competitive metric/score"
+    )
+
     # Record timestamps
     createdat = models.DateTimeField(
         auto_now_add=True,

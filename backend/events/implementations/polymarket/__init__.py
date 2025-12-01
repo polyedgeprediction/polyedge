@@ -1,0 +1,4 @@
+"""
+Polymarket event implementation package.
+"""
+
