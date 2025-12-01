@@ -4,6 +4,7 @@ POJO for Market data structure with trades and batch information.
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 from datetime import datetime, date
+from decimal import Decimal
 
 from trades.pojos.DailyTrades import DailyTrades
 from trades.pojos.Batch import Batch
@@ -18,13 +19,22 @@ class Market:
                     → DailyTrades (by date) → TradeTypes → Outcomes → Trades
                     → Batch (sync status)
     """
-    conditionId: str
-    marketSlug: str
+    conditionId: str  # platformmarketid in DB
+    marketSlug: str  # marketslug in DB
     question: str
-    endDate: Optional[datetime]
-    isOpen: bool
-    marketPk: Optional[int] = None  # Database primary key for efficient foreign key usage
+    endDate: Optional[datetime]  # enddate in DB
+    isOpen: bool  # derived from closedtime
+    marketPk: Optional[int] = None  # marketsid (primary key)
     positions: List['Position'] = field(default_factory=list)
+    
+    # Database fields (matching Market model)
+    marketId: Optional[int] = None  # marketid
+    startDate: Optional[datetime] = None  # startdate
+    marketCreatedAt: Optional[datetime] = None  # marketcreatedat
+    closedTime: Optional[datetime] = None  # closedtime
+    volume: Optional[Decimal] = None
+    liquidity: Optional[Decimal] = None
+    competitive: Optional[Decimal] = None
     
     # Market-wise trade data organized by date
     dailyTrades: Dict[date, DailyTrades] = field(default_factory=dict)

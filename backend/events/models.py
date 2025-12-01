@@ -80,6 +80,12 @@ class Event(models.Model):
         help_text="Event start date"
     )
 
+    enddate = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Event end date"
+    )
+
     creationdate = models.DateTimeField(
         default=timezone.now,
         help_text="Record creation date"
@@ -91,6 +97,13 @@ class Event(models.Model):
         default='polymarket',
         db_index=True,
         help_text="Trading platform"
+    )
+
+    # Tags
+    tags = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Event tags in JSON format"
     )
 
     class Meta:
