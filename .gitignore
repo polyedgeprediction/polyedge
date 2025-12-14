@@ -161,10 +161,10 @@ frontend/.nuxt/
 frontend/.cache/
 frontend/.parcel-cache/
 
-# Logs
-logs/
+# Logs - ignore log files but keep logs folder structure
 *.log
-app.log
+logs/*
+!logs/.gitkeep
 
 # Database
 *.db
