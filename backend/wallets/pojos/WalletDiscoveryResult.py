@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 
-@dataclass
+@dataclass(kw_only=True)
 class WalletDiscoveryResult:
     """
     Result of wallet discovery and filtering operation.
@@ -22,7 +22,7 @@ class WalletDiscoveryResult:
     positionsPersisted: int
     executionTimeSeconds: float
     rejectionReasons: Dict[str, int] = field(default_factory=dict)
-    error: Optional[str] = None
+    error: Optional[str] = field(default=None)
     
     def toDict(self) -> Dict[str, any]:
         """
