@@ -38,26 +38,45 @@ def getScheduler() -> BackgroundScheduler:
 
 def _createScheduler() -> BackgroundScheduler:
     """Create scheduler with Django integration"""
-    jobStores = {
-        'default': DjangoJobStore()  # Persists jobs in Django database
-    }
+    logger.info("SCHEDULER :: Creating scheduler instance...")
     
-    executors = {
-        'default': ThreadPoolExecutor(max_workers=4)
-    }
-    
-    jobDefaults = {
-        'coalesce': True,           # Combine multiple pending executions
-        'max_instances': 1,         # One instance per job
-        'misfire_grace_time': 300   # 5 minute grace period
-    }
-    
-    return BackgroundScheduler(
-        jobstores=jobStores,
-        executors=executors,
-        job_defaults=jobDefaults,
-        timezone='UTC'
-    )
+    try:
+        # Create DjangoJobStore - this might try to access the database
+        # Wrap in try-catch to handle any immediate database connection issues
+        logger.debug("SCHEDULER :: Creating DjangoJobStore...")
+        jobStore = DjangoJobStore()
+        logger.debug("SCHEDULER :: DjangoJobStore created successfully")
+        
+        jobStores = {
+            'default': jobStore  # Persists jobs in Django database
+        }
+        
+        executors = {
+            'default': ThreadPoolExecutor(max_workers=4)
+        }
+        
+        jobDefaults = {
+            'coalesce': True,           # Combine multiple pending executions
+            'max_instances': 1,         # One instance per job
+            'misfire_grace_time': 300   # 5 minute grace period
+        }
+        
+        logger.debug("SCHEDULER :: Creating BackgroundScheduler...")
+        scheduler = BackgroundScheduler(
+            jobstores=jobStores,
+            executors=executors,
+            job_defaults=jobDefaults,
+            timezone='UTC'
+        )
+        logger.info("SCHEDULER :: Scheduler instance created successfully")
+        return scheduler
+        
+    except Exception as e:
+        logger.error(
+            f"SCHEDULER :: Failed to create scheduler | Error: {e} | Type: {type(e).__name__}",
+            exc_info=True
+        )
+        raise
 
 
 def _startScheduler() -> None:
@@ -65,8 +84,18 @@ def _startScheduler() -> None:
     global _scheduler
     
     if _scheduler and not _scheduler.running:
-        _scheduler.start()
-        logger.info("SCHEDULER :: Started background scheduler")
+        try:
+            logger.info("SCHEDULER :: Starting scheduler...")
+            # NOTE: scheduler.start() might try to load existing jobs from database
+            # This could hang if the database is slow or locked
+            _scheduler.start()
+            logger.info("SCHEDULER :: Started background scheduler successfully")
+        except Exception as e:
+            logger.error(
+                f"SCHEDULER :: Failed to start scheduler | Error: {e} | Type: {type(e).__name__}",
+                exc_info=True
+            )
+            raise
 
 
 def isSchedulerRunning() -> bool:

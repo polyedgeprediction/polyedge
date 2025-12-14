@@ -7,26 +7,31 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def fetchLeaderboardData():
+def discoverAndFilterWallets():
     """
-    Job function: Fetch and update leaderboard wallet data.
+    Job function: Discover high-performing wallets from leaderboard and filter them.
+    Uses new market-level PNL calculation to fix merge/split corruption bug.
     Pure function - no scheduler coupling.
     """
     try:
-        from wallets.Scheduler import Scheduler
-        result = Scheduler.execute()
+        from wallets.services.SmartWalletDiscoveryService import SmartWalletDiscoveryService
+        
+        # Execute complete discovery and filtering pipeline
+        smart_discovery_service = SmartWalletDiscoveryService()
+        result = smart_discovery_service.discoverAndProcessWallets(minPnl=20000)
         
         logger.info(
-            "WALLET_JOB :: Leaderboard fetch completed | Success: %s | Wallets: %d",
-            result.get('success', False),
-            result.get('walletsProcessed', 0)
+            "WALLET_JOB :: Wallet discovery completed | Success: %s | Qualified: %d | Persisted: %d",
+            result.success,
+            result.qualified,
+            result.walletsPersisted
         )
         
-        return result
+        return result.toDict()  # Convert POJO to dict for scheduler compatibility
         
     except Exception as e:
         logger.error(
-            "WALLET_JOB :: Leaderboard fetch failed | Error: %s",
+            "WALLET_JOB :: Wallet discovery failed | Error: %s",
             str(e),
             exc_info=True
         )
