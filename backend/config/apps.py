@@ -140,6 +140,38 @@ def _ensureDatabaseConnection():
     connection.ensure_connection()
 
 
+def _ensureDjangoApschedulerTables():
+    """
+    FIRST PRINCIPLE: Verify django_apscheduler tables exist before using scheduler.
+    
+    If the django_apscheduler migrations haven't been run, DjangoJobStore
+    will fail or hang when trying to query non-existent tables.
+    
+    Returns True if tables exist, False otherwise.
+    """
+    try:
+        from django.db import connection
+        with connection.cursor() as cursor:
+            # Check if django_apscheduler_job table exists
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'django_apscheduler_djangojob'
+                );
+            """)
+            exists = cursor.fetchone()[0]
+            if exists:
+                logger.debug("CONFIG_APP :: django_apscheduler tables exist")
+            else:
+                logger.warning("CONFIG_APP :: django_apscheduler tables do not exist - migrations may not have been run")
+            return exists
+    except Exception as e:
+        logger.warning(f"CONFIG_APP :: Could not check for django_apscheduler tables: {e}")
+        # If we can't check, assume they exist (better to try than fail)
+        return True
+
+
 def _isCalledFromMigrationContext(**kwargs) -> bool:
     """
     FIRST PRINCIPLE: Distinguish between different call contexts.
@@ -280,8 +312,20 @@ class ConfigConfig(AppConfig):
             # This prevents trying to access database when it's not ready
             _ensureDatabaseConnection()
             
+            # FIRST PRINCIPLE: Verify django_apscheduler tables exist
+            # If tables don't exist, scheduler will fail or hang
+            if not _ensureDjangoApschedulerTables():
+                logger.warning(
+                    "CONFIG_APP :: django_apscheduler tables not found. "
+                    "Please run migrations: python manage.py migrate"
+                )
+                # Don't raise - allow server to start, but scheduler won't work
+                # User can run migrations and restart
+                return
+            
             # FIRST PRINCIPLE: Register jobs (with idempotency checks inside)
             # schedulerConfig.registerAllJobs() checks if jobs exist before adding
+            logger.info("CONFIG_APP :: Registering scheduler jobs...")
             from config.schedulerConfig import registerAllJobs
             registerAllJobs()
             

@@ -30,6 +30,10 @@ class PolymarketPositionResponse:
     
     # Closed position specific fields
     realizedPnl: Optional[Decimal] = None
+    timestamp: Optional[int] = None
+    
+    # Asset ID (outcome token) - critical for trade filtering
+    asset: Optional[str] = None
     
     @staticmethod
     def fromAPIResponse(data: dict, isOpen: bool) -> 'PolymarketPositionResponse':
@@ -55,8 +59,10 @@ class PolymarketPositionResponse:
             totalBought=Decimal(str(data.get('totalBought', 0))),
             endDate=data.get('endDate'),
             negativeRisk=data.get('negativeRisk', False),
-            size=Decimal(str(data.get('size', 0))) if isOpen else None,
-            currentValue=Decimal(str(data.get('currentValue', 0))) if isOpen else None,
-            realizedPnl=Decimal(str(data.get('realizedPnl', 0))) if not isOpen else None
+            size=Decimal(str(data.get('size', 0))),
+            currentValue=Decimal(str(data.get('currentValue', 0))),
+            realizedPnl=Decimal(str(data.get('realizedPnl', 0))),
+            timestamp=data.get('timestamp'),
+            asset=data.get('asset')
         )
 

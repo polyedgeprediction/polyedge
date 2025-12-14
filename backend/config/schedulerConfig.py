@@ -46,14 +46,33 @@ def _jobExists(scheduler, job_id: str) -> bool:
     
     Returns True if job exists, False otherwise.
     Handles exceptions gracefully (returns False if check fails).
+    
+    NOTE: This function checks if the scheduler is running before querying,
+    and handles database errors gracefully to prevent hanging.
     """
     try:
+        # FIRST PRINCIPLE: Verify scheduler is ready before querying
+        # If scheduler isn't running, jobs can't exist yet
+        if not scheduler or not scheduler.running:
+            logger.debug(f"SCHEDULER_CONFIG :: Scheduler not running, assuming job doesn't exist: {job_id}")
+            return False
+        
+        # Try to get the job - this queries the database
+        # If this hangs, it's likely a database connection issue
+        logger.debug(f"SCHEDULER_CONFIG :: Checking if job exists: {job_id}")
         job = scheduler.get_job(job_id)
-        return job is not None
+        exists = job is not None
+        logger.debug(f"SCHEDULER_CONFIG :: Job {job_id} exists: {exists}")
+        return exists
+        
     except Exception as e:
-        # If we can't check (e.g., DB error), assume job doesn't exist
+        # If we can't check (e.g., DB error, timeout, etc.), assume job doesn't exist
         # This is safer than assuming it exists (might cause duplicate)
-        logger.warning(f"SCHEDULER_CONFIG :: Could not check if job exists: {job_id} | Error: {e}")
+        # Log as warning so we know something went wrong, but don't fail startup
+        logger.warning(
+            f"SCHEDULER_CONFIG :: Could not check if job exists: {job_id} | "
+            f"Error: {e} | Type: {type(e).__name__}"
+        )
         return False
 
 
@@ -119,17 +138,16 @@ def _registerWalletJobs(scheduler):
     - Separation of concerns (wallet jobs separate from position jobs)
     - Maintainability (clear organization)
     """
-    from wallets.schedulers.jobs import fetchLeaderboardData
     
     # Job: Fetch leaderboard data periodically
     # FIRST PRINCIPLE: Explicit scheduling (clear when it runs)
-    _registerJob(
-        scheduler=scheduler,
-        job_id='fetch_leaderboard_data',
-        func=fetchLeaderboardData,
-        trigger_type='interval',
-        hours=1  # Run every hour
-    )
+    # _registerJob(
+    #     scheduler=scheduler,
+    #     job_id='fetch_leaderboard_data',
+    #     func=fetchLeaderboardData,
+    #     trigger_type='interval',
+    #     hours=1  # Run every hour
+    # )
     
     logger.info("SCHEDULER_CONFIG :: Wallet jobs registration completed")
 
