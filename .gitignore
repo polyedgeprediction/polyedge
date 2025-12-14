@@ -205,9 +205,9 @@ Thumbs.db
 # test_*.py
 # *_test.py
 
-# Migration files (CAUTION: only ignore if you're sure)
-# */migrations/*.py
-# !*/migrations/__init__.py
+# Django migrations - ignore all migration files and folders
+**/migrations/
+!**/migrations/__init__.py
 
 # Local configuration
 local_settings.py
