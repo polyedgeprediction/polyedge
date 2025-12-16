@@ -9,7 +9,7 @@ from decimal import Decimal
 from wallets.discovery.WalletEvaluvationService import WalletEvaluvationService
 from wallets.services.WalletPersistenceService import WalletPersistenceService
 from wallets.pojos.WalletCandidate import WalletCandidate
-from wallets.pojos.WalletFilterResult import WalletEvaluvationResult
+from wallets.pojos.WalletEvaluvationResult import WalletEvaluvationResult
 from wallets.pojos.WalletDiscoveryResult import WalletDiscoveryResult
 from wallets.pojos.WalletProcessingResult import WalletProcessingResult
 from wallets.models import Wallet

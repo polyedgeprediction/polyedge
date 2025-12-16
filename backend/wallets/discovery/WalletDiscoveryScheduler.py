@@ -4,9 +4,9 @@ Main orchestrator that coordinates discovery, filtering, and persistence.
 import logging
 from typing import List, Dict
 from wallets.discovery.WalletCandidateFetcher import WalletCandidateFetcher
-from wallets.discovery.WalletFilteringService import WalletEvaluvationService
+from wallets.discovery.WalletEvaluvationService import WalletEvaluvationService
 from wallets.discovery.WalletFilterPersistenceHandler import WalletFilterPersistenceHandler
-from wallets.pojos.WalletFilterResult import WalletEvaluvationResult
+from wallets.pojos.WalletEvaluvationResult import WalletEvaluvationResult
 
 logger = logging.getLogger(__name__)
 

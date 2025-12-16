@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from wallets.models import Wallet
 from wallets.enums import WalletType
-from wallets.pojos.WalletFilterResult import WalletEvaluvationResult
+from wallets.pojos.WalletEvaluvationResult import WalletEvaluvationResult
 from events.pojos.Event import Event
 from events.handlers.EventPersistenceHandler import EventPersistenceHandler
 from markets.handlers.MarketPersistenceHandler import MarketPersistenceHandler
