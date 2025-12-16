@@ -6,7 +6,7 @@ from . import views
 
 urlpatterns = [
     path('fetch', views.fetchAllPolymarketCategories, name='fetch-all-polymarket-categories'),
-    path('discover', views.discoverAndFilterWallets, name='discover-and-filter-wallets'),
-    path('filter', views.filterSpecificWallets, name='filter-specific-wallets'),
+    path('discover', views.evaluateWalletsFromLeaderboard, name='discover-and-filter-wallets'),
+    path('filter', views.evaluateWalletsOnDemand, name='filter-specific-wallets'),
 ]
 

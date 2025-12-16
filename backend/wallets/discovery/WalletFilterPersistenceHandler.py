@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from wallets.models import Wallet
 from wallets.enums import WalletType
-from wallets.pojos.WalletFilterResult import WalletFilterResult
+from wallets.pojos.WalletFilterResult import WalletEvaluvationResult
 from events.pojos.Event import Event
 from events.handlers.EventPersistenceHandler import EventPersistenceHandler
 from markets.handlers.MarketPersistenceHandler import MarketPersistenceHandler
@@ -25,7 +25,7 @@ class WalletFilterPersistenceHandler:
     No additional API calls needed.
     """
 
-    def persistQualifiedWallets(self, results: List[WalletFilterResult]) -> Dict[str, int]:
+    def persistQualifiedWallets(self, results: List[WalletEvaluvationResult]) -> Dict[str, int]:
         """
         Bulk persist all qualified wallets.
         
@@ -96,7 +96,7 @@ class WalletFilterPersistenceHandler:
             'positions': positionsCreated
         }
 
-    def _createWalletRecord(self, result: WalletFilterResult) -> Wallet:
+    def _createWalletRecord(self, result: WalletEvaluvationResult) -> Wallet:
         """
         Create Wallet model instance.
         

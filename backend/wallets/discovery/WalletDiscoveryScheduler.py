@@ -4,9 +4,9 @@ Main orchestrator that coordinates discovery, filtering, and persistence.
 import logging
 from typing import List, Dict
 from wallets.discovery.WalletCandidateFetcher import WalletCandidateFetcher
-from wallets.discovery.WalletFilteringService import WalletFilteringService
+from wallets.discovery.WalletFilteringService import WalletEvaluvationService
 from wallets.discovery.WalletFilterPersistenceHandler import WalletFilterPersistenceHandler
-from wallets.pojos.WalletFilterResult import WalletFilterResult
+from wallets.pojos.WalletFilterResult import WalletEvaluvationResult
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class WalletDiscoveryScheduler:
     
     def __init__(self):
         self.candidateFetcher = WalletCandidateFetcher()
-        self.filteringService = WalletFilteringService()
+        self.filteringService = WalletEvaluvationService()
         self.persistenceHandler = WalletFilterPersistenceHandler()
     
     @staticmethod
@@ -135,7 +135,7 @@ class WalletDiscoveryScheduler:
                 'positions_persisted': 0
             }
     
-    def discoverAndFilterWallets(self, minPnl: float = 20000) -> tuple[List[WalletFilterResult], List[WalletFilterResult]]:
+    def discoverAndFilterWallets(self, minPnl: float = 20000) -> tuple[List[WalletEvaluvationResult], List[WalletEvaluvationResult]]:
         """
         Step 1: Fetch candidates from leaderboard (period='all', PNL > 20K)
         Step 2: For each candidate, run filteringService.evaluateWallet()
@@ -175,7 +175,7 @@ class WalletDiscoveryScheduler:
             except Exception as e:
                 logger.info("WALLET_DISCOVERY_SCHEDULER :: Error filtering candidate %s: %s", candidate.proxyWallet[:10], str(e))
                 # Create failed result for statistics
-                failedWallet = WalletFilterResult(walletAddress=candidate.proxyWallet,passed=False,failReason=f"WALLET_DISCOVERY_SCHEDULER :: Filtering error | Error: {str(e)[:50]}",candidate=candidate)
+                failedWallet = WalletEvaluvationResult(walletAddress=candidate.proxyWallet,passed=False,failReason=f"WALLET_DISCOVERY_SCHEDULER :: Filtering error | Error: {str(e)[:50]}",candidate=candidate)
                 failedWallets.append(failedWallet)
         
         qualified = len(successfulWallets)
@@ -187,7 +187,7 @@ class WalletDiscoveryScheduler:
         # Return separate lists for efficient processing
         return successfulWallets, failedWallets
     
-    def persistQualifiedWallets(self, successfulWallets: List[WalletFilterResult]) -> Dict[str, int]:
+    def persistQualifiedWallets(self, successfulWallets: List[WalletEvaluvationResult]) -> Dict[str, int]:
         """
         Persist successful wallets directly (no filtering needed).
         Delegate to persistenceHandler.
@@ -208,7 +208,7 @@ class WalletDiscoveryScheduler:
     
     def _compileStatistics(
         self, 
-        results: List[WalletFilterResult], 
+        results: List[WalletEvaluvationResult], 
         persistenceStats: Dict[str, int], 
         startTime: float
     ) -> Dict[str, any]:
