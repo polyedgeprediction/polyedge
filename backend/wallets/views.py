@@ -183,7 +183,7 @@ def discoverAndFilterWallets(request: Request) -> Response:
         logger.info(f"SMART_WALLET_DISCOVERY :: Initiating wallet discovery and filtering (minPnl={minPnl})")
         
         smart_discovery_service = SmartWalletDiscoveryService()
-        result = smart_discovery_service.discoverAndProcessWallets(minPnl=minPnl)
+        result = smart_discovery_service.filterWalletsFromLeaderboard(minPnl=minPnl)
         
         # Handle business logic response
         if not result.success:
@@ -241,7 +241,7 @@ def filterSpecificWallets(request: Request) -> Response:
             
             # Process candidates using new service
             smart_discovery_service = SmartWalletDiscoveryService()
-            result = smart_discovery_service.processWalletCandidates(candidates)
+            result = smart_discovery_service.filterWalletsFound(candidates)
             
             # Convert to legacy format for API compatibility
             result['success'] = True

@@ -157,7 +157,9 @@ class WalletFilteringService:
         for conditionId in marketIds:
             try:
                 # Fetch ALL raw trades for accurate PNL calculation
+                logger.info("SMART_WALLET_DISCOVERY :: Fetching trades for market: started -  %s", conditionId[:10])
                 rawTrades, _ = PolymarketAPIService.fetchAllTrades(walletAddress, conditionId)
+                logger.info("SMART_WALLET_DISCOVERY :: Fetching trades for market: completed -  %s", conditionId[:10])
                 
                 if not rawTrades:
                     continue
@@ -189,11 +191,10 @@ class WalletFilteringService:
                     'tradesInRange': tradesInRangeCount
                 }
                 
-                logger.info("Market %s: %d trades (%d in range)", 
-                           conditionId[:10], len(rawTrades), tradesInRangeCount)
+                logger.info("SMART_WALLET_DISCOVERY :: Market %s: %d trades (%d in range)", conditionId[:10], len(rawTrades), tradesInRangeCount)
                 
             except Exception as e:
-                logger.warning("Failed to fetch trades for market %s: %s", conditionId[:10], str(e))
+                logger.info("SMART_WALLET_DISCOVERY :: Failed to fetch trades for market %s: %s", conditionId[:10], str(e))
                 continue
                 
         return tradesData

@@ -18,7 +18,7 @@ def discoverAndFilterWallets():
         
         # Execute complete discovery and filtering pipeline
         smart_discovery_service = SmartWalletDiscoveryService()
-        result = smart_discovery_service.discoverAndProcessWallets(minPnl=20000)
+        result = smart_discovery_service.filterWalletsFromLeaderboard(minPnl=20000)
         
         logger.info(
             "WALLET_JOB :: Wallet discovery completed | Success: %s | Qualified: %d | Persisted: %d",
