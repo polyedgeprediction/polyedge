@@ -38,54 +38,160 @@ class WalletPersistenceService:
     """
     
     @staticmethod
+    def bulkPersistWalletFilterResults(results: List[WalletFilterResult]) -> List[Wallet]:
+        """
+        Bulk persist multiple wallets that passed filtering in a single transaction.
+        More efficient than persisting individually.
+
+        Args:
+            results: List of WalletFilterResult objects that passed filtering
+
+        Returns:
+            List[Wallet]: List of successfully persisted wallet objects
+        """
+        if not results:
+            return []
+
+        # Filter out any results that didn't pass
+        validResults = [r for r in results if r.passed]
+        if not validResults:
+            logger.warning("No valid results to persist in bulk")
+            return []
+
+        persistedWallets = []
+
+        try:
+            with transaction.atomic():
+                # Step 1: Collect all events and markets from all results
+                allNeedtradesMarkets = {}
+                allDontneedtradesMarkets = {}
+
+                for result in validResults:
+                    allNeedtradesMarkets.update(result.needtradesMarkets)
+                    allDontneedtradesMarkets.update(result.dontneedtradesMarkets)
+
+                # Step 2: Persist all events and markets once
+                eventLookup, marketLookup = WalletPersistenceService._persistEventsAndMarkets(
+                    allNeedtradesMarkets, allDontneedtradesMarkets
+                )
+
+                # Step 3: Process each wallet
+                allPositions = []
+                allTrades = []
+                allBatches = []
+
+                for result in validResults:
+                    try:
+                        # Persist wallet
+                        wallet = WalletPersistenceService._persistWallet(result)
+                        if not wallet:
+                            logger.error("Failed to persist wallet %s in bulk operation", result.walletAddress[:10])
+                            continue
+
+                        # Collect positions for this wallet
+                        walletPositions = WalletPersistenceService._collectPositions(
+                            wallet, result.needtradesMarkets, result.dontneedtradesMarkets, marketLookup
+                        )
+                        allPositions.extend(walletPositions)
+
+                        # Collect trades for this wallet
+                        walletTrades = WalletPersistenceService._collectTrades(
+                            wallet, result.needtradesMarkets, marketLookup
+                        )
+                        allTrades.extend(walletTrades)
+
+                        # Collect batch records for this wallet
+                        walletBatches = WalletPersistenceService._collectBatchRecords(
+                            wallet, result.needtradesMarkets.keys(), marketLookup
+                        )
+                        allBatches.extend(walletBatches)
+
+                        # Mark wallet as OLD (processed)
+                        wallet.wallettype = WalletType.OLD
+                        wallet.save()
+
+                        persistedWallets.append(wallet)
+
+                        logger.debug("Prepared wallet for bulk persistence: %s | Markets: %d",
+                                   wallet.proxywallet[:10],
+                                   len(result.needtradesMarkets) + len(result.dontneedtradesMarkets))
+
+                    except Exception as e:
+                        logger.error("Error preparing wallet %s for bulk persistence: %s",
+                                   result.walletAddress[:10], str(e), exc_info=True)
+                        continue
+
+                # Step 4: Bulk create all positions, trades, and batches
+                if allPositions:
+                    Position.objects.bulk_create(allPositions, ignore_conflicts=True)
+                    logger.info("Bulk persisted %d positions", len(allPositions))
+
+                if allTrades:
+                    Trade.objects.bulk_create(allTrades, ignore_conflicts=True)
+                    logger.info("Bulk persisted %d trades", len(allTrades))
+
+                if allBatches:
+                    Batch.objects.bulk_create(allBatches, ignore_conflicts=True)
+                    logger.info("Bulk persisted %d batch records", len(allBatches))
+
+                logger.info("Successfully bulk persisted %d wallets with %d positions, %d trades, %d batches",
+                           len(persistedWallets), len(allPositions), len(allTrades), len(allBatches))
+
+                return persistedWallets
+
+        except Exception as e:
+            logger.error("Failed to bulk persist wallets: %s", str(e), exc_info=True)
+            return []
+
+    @staticmethod
     def persistWalletFilterResult(result: WalletFilterResult) -> Optional[Wallet]:
         """
         Main entry point for persisting a wallet that passed filtering.
-        
+
         Returns:
             Wallet: The persisted wallet object, or None if failed
         """
         if not result.passed:
             logger.warning("Attempted to persist failed wallet result: %s", result.walletAddress[:10])
             return None
-        
+
         try:
             with transaction.atomic():
                 # Step 1: Persist wallet
                 wallet = WalletPersistenceService._persistWallet(result)
                 if not wallet:
                     return None
-                
+
                 # Step 2: Extract and persist events/markets
                 eventLookup, marketLookup = WalletPersistenceService._persistEventsAndMarkets(
                     result.needtradesMarkets, result.dontneedtradesMarkets
                 )
-                
+
                 # Step 3: Persist positions with proper market FKs
                 WalletPersistenceService._persistPositions(
                     wallet, result.needtradesMarkets, result.dontneedtradesMarkets, marketLookup
                 )
-                
+
                 # Step 4: Persist trades for needtrades markets
                 WalletPersistenceService._persistTrades(
                     wallet, result.needtradesMarkets, marketLookup
                 )
-                
+
                 # Step 5: Create batch records for sync tracking
                 WalletPersistenceService._createBatchRecords(
                     wallet, result.needtradesMarkets.keys(), marketLookup
                 )
-                
+
                 # Step 6: Mark wallet as OLD (processed)
                 wallet.wallettype = WalletType.OLD
                 wallet.save()
-                
+
                 logger.info("Successfully persisted wallet: %s | Markets: %d | Positions: %d",
-                           wallet.proxywallet[:10], len(marketLookup), 
+                           wallet.proxywallet[:10], len(marketLookup),
                            len(result.openPositions) + len(result.closedPositions))
-                
+
                 return wallet
-                
+
         except Exception as e:
             logger.error("Failed to persist wallet %s: %s", result.walletAddress[:10], str(e), exc_info=True)
             return None
@@ -423,13 +529,13 @@ class WalletPersistenceService:
         Create batch records for trade sync tracking.
         """
         batches_to_create = []
-        
+
         try:
             for conditionId in needtradesMarketIds:
                 market = marketLookup.get(conditionId)
                 if not market:
                     continue
-                
+
                 batch_obj = Batch(
                     walletsid=wallet,
                     marketsid=market,
@@ -437,14 +543,140 @@ class WalletPersistenceService:
                     isactive=1
                 )
                 batches_to_create.append(batch_obj)
-            
+
             # Bulk create batches
             if batches_to_create:
                 Batch.objects.bulk_create(batches_to_create, ignore_conflicts=True)
                 logger.info("Created %d batch records for wallet %s", len(batches_to_create), wallet.proxywallet[:10])
-            
+
         except Exception as e:
             logger.error("Failed to create batch records for wallet %s: %s", wallet.proxywallet[:10], str(e))
+
+    @staticmethod
+    def _collectPositions(
+        wallet: Wallet,
+        needtradesMarkets: Dict[str, Dict],
+        dontneedtradesMarkets: Dict[str, List[PolymarketPositionResponse]],
+        marketLookup: Dict[str, Market]
+    ) -> List[Position]:
+        """
+        Collect position objects without persisting them (for bulk operations).
+        Returns list of Position objects ready for bulk_create.
+        """
+        positionsToCreate = []
+
+        try:
+            # Process needtrades markets
+            for conditionId, marketData in needtradesMarkets.items():
+                market = marketLookup.get(conditionId)
+                if not market:
+                    logger.warning("No market found for conditionId: %s", conditionId[:10])
+                    continue
+
+                # Extract already calculated amounts from market data
+                calculatedAmounts = {
+                    'amountInvested': marketData.get('calculatedAmountInvested', Decimal('0')),
+                    'amountOut': marketData.get('calculatedAmountOut', Decimal('0'))
+                }
+
+                for position in marketData['positions']:
+                    posObj = WalletPersistenceService._createPositionObject(
+                        wallet, market, position,
+                        tradesAlreadyFetched=True,
+                        calculatedAmounts=calculatedAmounts
+                    )
+                    if posObj:
+                        positionsToCreate.append(posObj)
+
+            # Process dontneedtrades markets
+            for conditionId, positions in dontneedtradesMarkets.items():
+                market = marketLookup.get(conditionId)
+                if not market:
+                    logger.warning("No market found for conditionId: %s", conditionId[:10])
+                    continue
+
+                for position in positions:
+                    posObj = WalletPersistenceService._createPositionObject(
+                        wallet, market, position, tradesAlreadyFetched=False
+                    )
+                    if posObj:
+                        positionsToCreate.append(posObj)
+
+        except Exception as e:
+            logger.error("Failed to collect positions for wallet %s: %s", wallet.proxywallet[:10], str(e))
+
+        return positionsToCreate
+
+    @staticmethod
+    def _collectTrades(
+        wallet: Wallet,
+        needtradesMarkets: Dict[str, Dict],
+        marketLookup: Dict[str, Market]
+    ) -> List[Trade]:
+        """
+        Collect trade objects without persisting them (for bulk operations).
+        Returns list of Trade objects ready for bulk_create.
+        """
+        tradesToCreate = []
+
+        try:
+            for conditionId, marketData in needtradesMarkets.items():
+                market = marketLookup.get(conditionId)
+                if not market:
+                    continue
+
+                dailyTradesMap = marketData['dailyTradesMap']
+
+                for date_key, dailyTrades in dailyTradesMap.items():
+                    for aggregatedTrade in dailyTrades.getAllTrades():
+                        tradeObj = Trade(
+                            walletsid=wallet,
+                            marketsid=market,
+                            conditionid=conditionId,
+                            tradetype=aggregatedTrade.tradeType.value,
+                            outcome=aggregatedTrade.outcome,
+                            totalshares=aggregatedTrade.totalShares,
+                            totalamount=aggregatedTrade.totalAmount,
+                            tradedate=aggregatedTrade.tradeDate,
+                            transactioncount=aggregatedTrade.transactionCount
+                        )
+                        tradesToCreate.append(tradeObj)
+
+        except Exception as e:
+            logger.error("Failed to collect trades for wallet %s: %s", wallet.proxywallet[:10], str(e))
+
+        return tradesToCreate
+
+    @staticmethod
+    def _collectBatchRecords(
+        wallet: Wallet,
+        needtradesMarketIds: List[str],
+        marketLookup: Dict[str, Market]
+    ) -> List[Batch]:
+        """
+        Collect batch record objects without persisting them (for bulk operations).
+        Returns list of Batch objects ready for bulk_create.
+        """
+        batchesToCreate = []
+
+        try:
+            for conditionId in needtradesMarketIds:
+                market = marketLookup.get(conditionId)
+                if not market:
+                    continue
+
+                batchObj = Batch(
+                    walletsid=wallet,
+                    marketsid=market,
+                    latestfetchedtime=int(datetime.now().timestamp()),
+                    isactive=1
+                )
+                batchesToCreate.append(batchObj)
+
+        except Exception as e:
+            logger.error("Failed to collect batch records for wallet %s: %s", wallet.proxywallet[:10], str(e))
+
+        return batchesToCreate
     
     @staticmethod
     def _getOppositeOutcome(outcome: Optional[str]) -> str:

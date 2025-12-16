@@ -86,57 +86,70 @@ class SmartWalletDiscoveryService:
     
     def processWalletCandidates(self, candidates: List[WalletCandidate]) -> WalletProcessingResult:
         logger.info("SMART_WALLET_DISCOVERY :: Processing %d wallet candidates", len(candidates))
-        
+
         results = WalletProcessingResult.create()
-        
-        passed_results = []
-        
+
+        passedResults = []
+
         for candidate in candidates:
             results.totalProcessed += 1
-            
+
             try:
                 # Step 1: Filter wallet using market-level PNL calculation
-                filter_result = self.filtering_service.evaluateWallet(candidate)
-                
-                if filter_result.passed:
+                filterResult = self.filtering_service.evaluateWallet(candidate)
+
+                if filterResult.passed:
                     results.passedFiltering += 1
-                    passed_results.append(filter_result)
+                    passedResults.append(filterResult)
                     logger.info("SMART_WALLET_DISCOVERY :: Wallet PASSED filtering: %s | Trades: %d | PNL: %.2f",
-                               candidate.proxyWallet[:10], filter_result.tradeCount, 
-                               float(filter_result.combinedPnl))
-                    
-                    # Step 2: Persist wallet and all related data
-                    persisted_wallet = self.persistence_service.persistWalletFilterResult(filter_result)
-                    
-                    if persisted_wallet:
-                        results.successfullyPersisted += 1
-                        logger.info("SMART_WALLET_DISCOVERY :: Wallet PERSISTED successfully: %s (ID: %d)",
-                                   persisted_wallet.proxywallet[:10], persisted_wallet.walletsid)
-                    else:
-                        results.addFailedPersistence(candidate.proxyWallet)
-                        logger.error("SMART_WALLET_DISCOVERY :: Wallet PERSISTENCE FAILED: %s", candidate.proxyWallet[:10])
-                
+                               candidate.proxyWallet[:10], filterResult.tradeCount,
+                               float(filterResult.combinedPnl))
+
                 else:
                     results.addFailedFiltering({
                         'address': candidate.proxyWallet,
-                        'reason': filter_result.failReason
+                        'reason': filterResult.failReason
                     })
                     logger.debug("SMART_WALLET_DISCOVERY :: Wallet FAILED filtering: %s | Reason: %s",
-                                candidate.proxyWallet[:10], filter_result.failReason)
-                
+                                candidate.proxyWallet[:10], filterResult.failReason)
+
             except Exception as e:
                 logger.error("SMART_WALLET_DISCOVERY :: Error processing wallet %s: %s", candidate.proxyWallet[:10], str(e), exc_info=True)
                 results.addFailedFiltering({
                     'address': candidate.proxyWallet,
                     'reason': f"Processing error: {str(e)[:50]}"
                 })
-        
+
+        # Step 2: Bulk persist all wallets that passed filtering
+        if passedResults:
+            try:
+                persistedWallets = self.persistence_service.bulkPersistWalletFilterResults(passedResults)
+                results.successfullyPersisted = len(persistedWallets)
+
+                logger.info("SMART_WALLET_DISCOVERY :: Bulk PERSISTED %d wallets successfully",
+                           results.successfullyPersisted)
+
+                # Track which wallets failed persistence
+                if results.successfullyPersisted < len(passedResults):
+                    persistedAddresses = {w.proxywallet for w in persistedWallets}
+                    for filterResult in passedResults:
+                        if filterResult.walletAddress not in persistedAddresses:
+                            results.addFailedPersistence(filterResult.walletAddress)
+                            logger.error("SMART_WALLET_DISCOVERY :: Wallet PERSISTENCE FAILED: %s",
+                                       filterResult.walletAddress[:10])
+
+            except Exception as e:
+                logger.error("SMART_WALLET_DISCOVERY :: Bulk persistence FAILED: %s", str(e), exc_info=True)
+                # Mark all as failed
+                for filterResult in passedResults:
+                    results.addFailedPersistence(filterResult.walletAddress)
+
         # Calculate metrics for passed wallets
-        results.updateMetrics(passed_results)
-        
+        results.updateMetrics(passedResults)
+
         logger.info("Batch processing complete | Processed: %d | Passed: %d | Persisted: %d",
                    results.totalProcessed, results.passedFiltering, results.successfullyPersisted)
-        
+
         return results
     
     def processSingleWallet(self, candidate: WalletCandidate) -> tuple[Optional[Wallet], WalletFilterResult]:
