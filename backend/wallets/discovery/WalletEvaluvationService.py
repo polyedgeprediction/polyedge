@@ -16,18 +16,18 @@ from trades.enums.TradeType import TradeType
 from positions.pojos.PolymarketPositionResponse import PolymarketPositionResponse
 from wallets.pojos.WalletCandidate import WalletCandidate
 from wallets.pojos.WalletFilterCriteria import WalletFilterCriteria
-from wallets.pojos.WalletFilterResult import WalletFilterResult
+from wallets.pojos.WalletEvaluvationResult import WalletEvaluvationResult
 from wallets.Constants import (
     WALLET_FILTER_TRADE_COUNT_THRESHOLD,
     WALLET_FILTER_POSITION_COUNT_THRESHOLD,
     WALLET_FILTER_PNL_THRESHOLD,
-    WALLET_FILTER_ACTIVITY_WINDOW_DAYS
+    WALLET_EVALUVATION_ACTIVITY_WINDOW_DAYS
 )
 
 logger = logging.getLogger(__name__)
 
 
-class WalletFilteringService:
+class WalletEvaluvationService:
     """
     Evaluates wallets against filtering criteria with market-level PNL calculation.
     
@@ -43,7 +43,7 @@ class WalletFilteringService:
     TRADE_COUNT_THRESHOLD = WALLET_FILTER_TRADE_COUNT_THRESHOLD
     POSITION_COUNT_THRESHOLD = WALLET_FILTER_POSITION_COUNT_THRESHOLD
     PNL_THRESHOLD = WALLET_FILTER_PNL_THRESHOLD
-    ACTIVITY_WINDOW_DAYS = WALLET_FILTER_ACTIVITY_WINDOW_DAYS
+    ACTIVITY_WINDOW_DAYS = WALLET_EVALUVATION_ACTIVITY_WINDOW_DAYS
     
     # Trade types for PNL calculation
     INVESTMENT_TYPES = [TradeType.BUY, TradeType.SPLIT]
@@ -54,7 +54,7 @@ class WalletFilteringService:
         self.closedPositionAPI = ClosedPositionAPI()
         self.criteria = WalletFilterCriteria()
 
-    def evaluateWallet(self, candidate: WalletCandidate) -> WalletFilterResult:
+    def evaluateWallet(self, candidate: WalletCandidate) -> WalletEvaluvationResult:
         """
         Simplified evaluation pipeline with market-level PNL calculation.
         
@@ -67,7 +67,7 @@ class WalletFilteringService:
         6. Calculate market-level PNL
         7. Apply PNL filter
         """
-        result = WalletFilterResult.create(walletAddress=candidate.proxyWallet, passed=False, candidate=candidate)
+        result = WalletEvaluvationResult.create(walletAddress=candidate.proxyWallet, passed=False, candidate=candidate)
         
         try:
             logger.info("SMART_WALLET_DISCOVERY :: Evaluating wallet: %s", candidate.proxyWallet[:10])

@@ -17,7 +17,7 @@ from positions.models import Position
 from trades.models import Trade, Batch
 from positions.enums.PositionStatus import PositionStatus
 from positions.enums.TradeStatus import TradeStatus
-from wallets.pojos.WalletFilterResult import WalletFilterResult
+from wallets.pojos.WalletFilterResult import WalletEvaluvationResult
 from wallets.pojos.WalletCandidate import WalletCandidate
 from positions.pojos.PolymarketPositionResponse import PolymarketPositionResponse
 
@@ -38,7 +38,7 @@ class WalletPersistenceService:
     """
     
     @staticmethod
-    def persistWalletFilterResult(result: WalletFilterResult) -> Optional[Wallet]:
+    def persistWalletFilterResult(result: WalletEvaluvationResult) -> Optional[Wallet]:
         """
         Main entry point for persisting a wallet that passed filtering.
         
@@ -91,7 +91,7 @@ class WalletPersistenceService:
             return None
     
     @staticmethod
-    def _persistWallet(result: WalletFilterResult) -> Optional[Wallet]:
+    def _persistWallet(result: WalletEvaluvationResult) -> Optional[Wallet]:
         """
         Persist wallet from candidate data.
         """

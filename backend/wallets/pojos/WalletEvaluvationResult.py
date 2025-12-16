@@ -9,7 +9,7 @@ from wallets.pojos.WalletCandidate import WalletCandidate
 
 
 @dataclass
-class WalletFilterResult:
+class WalletEvaluvationResult:
     """Result of wallet evaluation with collected data for reuse."""
     
     walletAddress: str

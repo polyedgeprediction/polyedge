@@ -15,6 +15,9 @@ from .implementations.polymarket.Constants import (
     TIME_PERIOD_MONTH
 )
 from wallets.services.SmartWalletDiscoveryService import SmartWalletDiscoveryService
+from wallets.pojos.WalletCandidate import WalletCandidate
+from decimal import Decimal
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -132,9 +135,9 @@ def fetchAllPolymarketCategories(request: Request) -> Response:
 
 
 @api_view(['POST'])
-def discoverAndFilterWallets(request: Request) -> Response:
+def evaluateWalletsFromLeaderboard(request: Request) -> Response:
     """
-    Discover high-performing wallets from leaderboard and filter them based on activity/PNL.
+    Evaluate high-performing wallets from leaderboard based on activity/PNL.
     
     Endpoint: POST /api/smartwallets/discover
     
@@ -173,7 +176,7 @@ def discoverAndFilterWallets(request: Request) -> Response:
         
         # Validate minPnl
         if not isinstance(minPnl, (int, float)) or minPnl <= 0:
-            logger.info(f"Invalid minPnl parameter: {minPnl}")
+            logger.info(f"SMART_WALLET_DISCOVERY :: Invalid minPnl parameter: {minPnl}")
             return Response(
                 APIResponseBuilder.error("minPnl must be a positive number"),
                 status=status.HTTP_400_BAD_REQUEST
@@ -187,18 +190,18 @@ def discoverAndFilterWallets(request: Request) -> Response:
         
         # Handle business logic response
         if not result.success:
-            logger.error(f"WALLET_DISCOVERY_SCHEDULER :: Wallet discovery failed: {result.error}")
+            logger.error(f"evaluate :: Wallet discovery failed: {result.error}")
             return Response(
                 APIResponseBuilder.error(result.error or 'Wallet discovery failed'),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-        logger.info(f"WALLET_DISCOVERY_SCHEDULER :: Wallet discovery completed | Qualified: {result.qualified} | Persisted: {result.walletsPersisted}")
+        logger.info(f"evaluate :: Wallet discovery completed | Qualified: {result.qualified} | Persisted: {result.walletsPersisted}")
         return Response(result.toDict(), status=status.HTTP_200_OK)
         
     except Exception as e:
         # Catch-all for unexpected errors
-        logger.exception("Unexpected error in discoverAndFilterWallets")
+        logger.info("SMART_WALLET_DISCOVERY :: Unexpected error in evaluateWalletsFromLeaderboard")
         return Response(
             APIResponseBuilder.error(f"Internal server error: {str(e)}"),
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -206,7 +209,7 @@ def discoverAndFilterWallets(request: Request) -> Response:
 
 
 @api_view(['POST'])
-def filterSpecificWallets(request: Request) -> Response:
+def evaluateWalletsOnDemand(request: Request) -> Response:
     """
     Filter specific wallet addresses through the filtering system.
     
@@ -218,14 +221,9 @@ def filterSpecificWallets(request: Request) -> Response:
     try:
         walletAddresses = request.data.get('walletAddresses', [])
         
-        logger.info(f"SMART_WALLET_DISCOVERY :: Filtering {len(walletAddresses)} specific wallets")
-        
-        # Execute filtering using new market-level PNL service
-        from wallets.pojos.WalletCandidate import WalletCandidate
-        from decimal import Decimal
-        import time
-        
-        start_time = time.time()
+        logger.info(f"SMART_WALLET_DISCOVERY :: Filtering {len(walletAddresses)} specific wallet addresss")
+
+        startTime = time.time()
         
         try:
             # Convert wallet addresses to candidates
@@ -241,7 +239,7 @@ def filterSpecificWallets(request: Request) -> Response:
             
             # Process candidates using new service
             smart_discovery_service = SmartWalletDiscoveryService()
-            result = smart_discovery_service.filterWalletsFound(candidates)
+            result = smart_discovery_service.evaluateWalletsFromLeaderboard(candidates)
             
             # Convert to legacy format for API compatibility
             result['success'] = True
@@ -251,7 +249,7 @@ def filterSpecificWallets(request: Request) -> Response:
             result['rejected'] = result['total_processed'] - result['passed_filtering']
             result['wallets_persisted'] = result['successfully_persisted']
             result['positions_persisted'] = 0  # Not tracked in new service
-            result['execution_time_seconds'] = round(time.time() - start_time, 2)
+            result['execution_time_seconds'] = round(time.time() - startTime, 2)
             
             # Convert failure reasons to legacy format
             rejection_reasons = {}
@@ -271,15 +269,15 @@ def filterSpecificWallets(request: Request) -> Response:
                 'rejected': len(walletAddresses),
                 'wallets_persisted': 0,
                 'positions_persisted': 0,
-                'execution_time_seconds': round(time.time() - start_time, 2)
+                'execution_time_seconds': round(time.time() - startTime, 2)
             }
         
-        logger.info(f"WALLET_DISCOVERY_SCHEDULER :: Specific wallet filtering completed | Qualified: {result['qualified']} | Persisted: {result['wallets_persisted']}")
+        logger.info(f"SMART_WALLET_DISCOVERY :: Specific wallet filtering completed | Qualified: {result['qualified']} | Persisted: {result['wallets_persisted']}")
         return Response(result, status=status.HTTP_200_OK)
         
     except Exception as e:
-        logger.exception("WALLET_DISCOVERY_SCHEDULER :: Error filtering specific wallets: %s", str(e), exc_info=True)
+        logger.exception("SMART_WALLET_DISCOVERY :: Error filtering specific wallets: %s", str(e), exc_info=True)
         return Response(
-            APIResponseBuilder.error(f"WALLET_DISCOVERY_SCHEDULER :: Internal server error: {str(e)}"),
+            APIResponseBuilder.error(f"SMART_WALLET_DISCOVERY :: Internal server error: {str(e)}"),
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
