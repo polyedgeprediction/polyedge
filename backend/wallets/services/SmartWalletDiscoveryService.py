@@ -34,7 +34,7 @@ class SmartWalletDiscoveryService:
         self.filtering_service = WalletFilteringService()
         self.persistence_service = WalletPersistenceService()
     
-    def discoverAndProcessWallets(self, minPnl: float = 20000) -> WalletDiscoveryResult:
+    def filterWalletsFromLeaderboard(self, minPnl: float = 20000) -> WalletDiscoveryResult:
         start_time = time.time()
         
         try:
@@ -45,68 +45,68 @@ class SmartWalletDiscoveryService:
             candidates = candidate_fetcher.fetchCandidates(minPnl=minPnl)
             
             if not candidates:
-                logger.warning("SMART_WALLET_DISCOVERY :: No candidates found from leaderboard")
-                execution_time = round(time.time() - start_time, 2)
-                return WalletDiscoveryResult.empty(execution_time)
+                logger.info("SMART_WALLET_DISCOVERY :: No candidates found from leaderboard")
+                executionTime = round(time.time() - start_time, 2)
+                return WalletDiscoveryResult.empty(executionTime)
             
             logger.info("SMART_WALLET_DISCOVERY :: Found %d candidates, processing...", len(candidates))
             
             # Step 2: Process candidates through filtering and persistence pipeline
-            processing_result = self.processWalletCandidates(candidates)
+            filteredWalletsData = self.filterWalletsFound(candidates)
             
             # Step 3: Build clean POJO response
-            execution_time = round(time.time() - start_time, 2)
+            executionTime = round(time.time() - start_time, 2)
             
             # Convert failure reasons to summary format
-            rejection_reasons = {}
-            for failure in processing_result.failedFiltering:
+            rejectionReasons = {}
+            for failure in filteredWalletsData.failedFiltering:
                 if isinstance(failure, dict) and 'reason' in failure:
                     reason_key = failure['reason'].split(' |')[0].replace('Insufficient ', '').lower()
-                    rejection_reasons[reason_key] = rejection_reasons.get(reason_key, 0) + 1
+                    rejectionReasons[reason_key] = rejectionReasons.get(reason_key, 0) + 1
             
             result = WalletDiscoveryResult.success(
-                candidatesFound=processing_result.totalProcessed,
-                qualified=processing_result.passedFiltering,
-                rejected=processing_result.rejectedCount,
-                walletsPersisted=processing_result.successfullyPersisted,
+                candidatesFound=filteredWalletsData.totalProcessed,
+                qualified=filteredWalletsData.passedFiltering,
+                rejected=filteredWalletsData.rejectedCount,
+                walletsPersisted=filteredWalletsData.successfullyPersisted,
                 positionsPersisted=0,  # Not tracked separately in new system
-                executionTimeSeconds=execution_time,
-                rejectionReasons=rejection_reasons
+                executionTimeSeconds=executionTime,
+                rejectionReasons=rejectionReasons
             )
             
             logger.info("SMART_WALLET_DISCOVERY :: Pipeline completed | Qualified: %d | Persisted: %d | Time: %.1fs",
-                       result.qualified, result.walletsPersisted, execution_time)
+                       result.qualified, result.walletsPersisted, executionTime)
             
             return result
             
         except Exception as e:
-            execution_time = round(time.time() - start_time, 2)
+            executionTime = round(time.time() - start_time, 2)
             logger.error("SMART_WALLET_DISCOVERY :: Pipeline failed: %s", str(e), exc_info=True)
-            return WalletDiscoveryResult.failure(str(e), execution_time)
+            return WalletDiscoveryResult.failure(str(e), executionTime)
     
-    def processWalletCandidates(self, candidates: List[WalletCandidate]) -> WalletProcessingResult:
+    def filterWalletsFound(self, candidates: List[WalletCandidate]) -> WalletProcessingResult:
         logger.info("SMART_WALLET_DISCOVERY :: Processing %d wallet candidates", len(candidates))
         
         results = WalletProcessingResult.create()
         
-        passed_results = []
+        filteredWallets = []
         
         for candidate in candidates:
             results.totalProcessed += 1
             
             try:
                 # Step 1: Filter wallet using market-level PNL calculation
-                filter_result = self.filtering_service.evaluateWallet(candidate)
+                filteredWalletData = self.filtering_service.evaluateWallet(candidate)
                 
-                if filter_result.passed:
+                if filteredWalletData.passed:
                     results.passedFiltering += 1
-                    passed_results.append(filter_result)
+                    filteredWallets.append(filteredWalletData)
                     logger.info("SMART_WALLET_DISCOVERY :: Wallet PASSED filtering: %s | Trades: %d | PNL: %.2f",
-                               candidate.proxyWallet[:10], filter_result.tradeCount, 
-                               float(filter_result.combinedPnl))
+                               candidate.proxyWallet[:10], filteredWalletData.tradeCount, 
+                               float(filteredWalletData.combinedPnl))
                     
                     # Step 2: Persist wallet and all related data
-                    persisted_wallet = self.persistence_service.persistWalletFilterResult(filter_result)
+                    persisted_wallet = self.persistence_service.persistWalletFilterResult(filteredWalletData)
                     
                     if persisted_wallet:
                         results.successfullyPersisted += 1
@@ -119,10 +119,10 @@ class SmartWalletDiscoveryService:
                 else:
                     results.addFailedFiltering({
                         'address': candidate.proxyWallet,
-                        'reason': filter_result.failReason
+                        'reason': filteredWalletData.failReason
                     })
                     logger.debug("SMART_WALLET_DISCOVERY :: Wallet FAILED filtering: %s | Reason: %s",
-                                candidate.proxyWallet[:10], filter_result.failReason)
+                                candidate.proxyWallet[:10], filteredWalletData.failReason)
                 
             except Exception as e:
                 logger.error("SMART_WALLET_DISCOVERY :: Error processing wallet %s: %s", candidate.proxyWallet[:10], str(e), exc_info=True)
@@ -132,7 +132,7 @@ class SmartWalletDiscoveryService:
                 })
         
         # Calculate metrics for passed wallets
-        results.updateMetrics(passed_results)
+        results.updateMetrics(filteredWallets)
         
         logger.info("Batch processing complete | Processed: %d | Passed: %d | Persisted: %d",
                    results.totalProcessed, results.passedFiltering, results.successfullyPersisted)
@@ -140,16 +140,7 @@ class SmartWalletDiscoveryService:
         return results
     
     def processSingleWallet(self, candidate: WalletCandidate) -> tuple[Optional[Wallet], WalletFilterResult]:
-        """
-        Process a single wallet candidate through the complete pipeline.
-        
-        Args:
-            candidate: Wallet candidate to process
-            
-        Returns:
-            (persisted_wallet, filter_result): Tuple of persisted wallet (if successful) and filter result
-        """
-        logger.info("Processing single wallet: %s", candidate.proxyWallet[:10])
+        logger.info("SMART_WALLET_DISCOVERY :: Processing single wallet: %s", candidate.proxyWallet[:10])
         
         try:
             # Step 1: Filter wallet
@@ -171,12 +162,12 @@ class SmartWalletDiscoveryService:
                 logger.info("Wallet persisted successfully: %s (ID: %d)",
                            persisted_wallet.proxywallet[:10], persisted_wallet.walletsid)
             else:
-                logger.error("Failed to persist wallet: %s", candidate.proxyWallet[:10])
+                logger.info("Failed to persist wallet: %s", candidate.proxyWallet[:10])
             
             return persisted_wallet, filter_result
             
         except Exception as e:
-            logger.error("Error processing wallet %s: %s", candidate.proxyWallet[:10], str(e), exc_info=True)
+            logger.info("Error processing wallet %s: %s", candidate.proxyWallet[:10], str(e), exc_info=True)
             
             # Create error result
             error_result = WalletFilterResult(
