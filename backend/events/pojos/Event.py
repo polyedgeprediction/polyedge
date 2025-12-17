@@ -12,12 +12,12 @@ class Event:
     """
     Represents an Event with nested Markets.
     Structure: Event → Markets → Positions
-    
+
     Only contains fields that map to database columns.
     """
     eventSlug: str
     markets: Dict[str, 'Market'] = field(default_factory=dict)
-    
+
     # Database fields (matching Event model)
     platformEventId: Optional[int] = None  # platformeventid
     title: Optional[str] = None
@@ -32,10 +32,30 @@ class Event:
     startDate: Optional[datetime] = None  # startdate
     endDate: Optional[datetime] = None  # enddate
     tags: Optional[list] = None
-    
+
+    # Aggregated PNL across all markets in this event
+    totalPnl: Decimal = field(default_factory=lambda: Decimal('0'))
+
     def addMarket(self, conditionId: str, market: 'Market') -> None:
         """Add a market to this event."""
         self.markets[conditionId] = market
+
+    def getPrimaryCategory(self) -> Optional[str]:
+        """Extract primary category from tags (first tag if available)."""
+        if self.tags and len(self.tags) > 0:
+            return self.tags[0]
+        return None
+
+    def getAllCategories(self) -> list:
+        """Get all categories from tags."""
+        return self.tags if self.tags else []
+
+    def aggregatePnl(self) -> Decimal:
+        """Aggregate PNL from all markets in this event."""
+        self.totalPnl = sum(
+            (market.calculatedPnl or Decimal('0')) for market in self.markets.values()
+        )
+        return self.totalPnl
 
 
 # Avoid circular import

@@ -65,7 +65,7 @@ class OpenPositionAPI:
             # Move to next page
             offset += limit
 
-            logger.info("FETCH_NEW_WALLET_POSITIONS_SCHEDULER :: Fetched %d total positions | Wallet: %s", len(allPositions), walletAddress[:10])
+        logger.info("OPEN_POSITION_API :: Fetched %d total positions | Wallet: %s", len(allPositions), walletAddress[:10])
         
         return allPositions
 

@@ -2,7 +2,7 @@
 Django admin configuration for Wallet models.
 """
 from django.contrib import admin
-from .models import Wallet, WalletCategoryStat
+from .models import Wallet      
 
 
 @admin.register(Wallet)
@@ -53,53 +53,3 @@ class WalletAdmin(admin.ModelAdmin):
     list_per_page = 50
 
 
-@admin.register(WalletCategoryStat)
-class WalletCategoryStatAdmin(admin.ModelAdmin):
-    """Admin interface for WalletCategoryStat model"""
-    
-    list_display = [
-        'statid',
-        'wallets',
-        'category',
-        'timeperiod',
-        'rank',
-        'volume_formatted',
-        'pnl_formatted',
-        'snapshottime',
-    ]
-    
-    list_filter = [
-        'category',
-        'timeperiod',
-        'snapshottime',
-    ]
-    
-    search_fields = [
-        'wallets__username',
-        'wallets__proxywallet',
-        'category',
-    ]
-    
-    ordering = ['-snapshottime', 'rank']
-    readonly_fields = ['createdat', 'lastupdatedat', 'roi_percentage']
-    
-    fieldsets = (
-        ('Wallet Reference', {
-            'fields': ('wallets',)
-        }),
-        ('Category Information', {
-            'fields': ('category', 'timeperiod', 'rank')
-        }),
-        ('Performance Metrics', {
-            'fields': ('volume', 'pnl', 'roi_percentage')
-        }),
-        ('Timestamps', {
-            'fields': ('snapshottime', 'createdat', 'lastupdatedat'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    list_per_page = 100
-    
-    # Show related wallet info in detail view
-    autocomplete_fields = ['wallets']

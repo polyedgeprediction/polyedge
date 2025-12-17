@@ -61,6 +61,14 @@ class Wallet(models.Model):
         help_text="Trading platform (polymarket, etc.)"
     )
 
+    category = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Primary market category (Politics, Sports, Crypto, etc.)"
+    )
+
     wallettype = models.CharField(
         max_length=10,
         choices=WalletType.choices,
@@ -92,6 +100,8 @@ class Wallet(models.Model):
             models.Index(fields=['proxywallet']),
             models.Index(fields=['username']),
             models.Index(fields=['isactive', 'platform']),
+            models.Index(fields=['category']),
+            models.Index(fields=['platform', 'category']),
         ]
 
     def __str__(self):
@@ -113,125 +123,4 @@ class Wallet(models.Model):
         if len(self.proxywallet) > 10:
             return f"{self.proxywallet[:6]}...{self.proxywallet[-4:]}"
         return self.proxywallet
-
-
-class WalletCategoryStat(models.Model):
-    """
-    Performance statistics for wallets by category and time period.
-    """
-
-    # Primary key
-    statid = models.BigAutoField(primary_key=True)
-
-    # Foreign key to Wallet
-    wallets = models.ForeignKey(
-        Wallet,
-        on_delete=models.CASCADE,
-        related_name='category_stats',
-        db_column='walletsid',  # Keeps column name as walletsid
-        help_text="Wallet this stat belongs to"
-    )
-
-    # Category information
-    category = models.CharField(
-        max_length=100,
-        db_index=True,
-        help_text="Market category (Politics, Sports, Crypto, etc.)"
-    )
-
-    timeperiod = models.CharField(
-        max_length=20,
-        db_index=True,
-        help_text="Time period (7d, 30d, 90d, all-time)"
-    )
-
-    # Performance metrics
-    rank = models.SmallIntegerField(
-        help_text="Rank in this category for this time period"
-    )
-
-    # Trading volume
-    volume = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        help_text="Trading volume in USD"
-    )
-
-    # Profit and Loss
-    pnl = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        help_text="Profit and Loss in USD"
-    )
-
-    # Snapshot time
-    snapshottime = models.DateTimeField(
-        db_index=True,
-        help_text="When this snapshot was taken"
-    )
-
-    # Timestamps
-    createdat = models.DateTimeField(
-        auto_now_add=True,
-        help_text="When record was created"
-    )
-
-    # Last updated timestamp
-    lastupdatedat = models.DateTimeField(
-        auto_now=True,
-        help_text="Last update timestamp"
-    )
-
-    class Meta:
-        db_table = 'walletcategorystats'
-        verbose_name = 'Wallet Category Stat'
-        verbose_name_plural = 'Wallet Category Stats'
-        ordering = ['-snapshottime', 'rank']
-        
-        # Composite indexes for fast queries
-        indexes = [
-            models.Index(fields=['wallets', 'category', 'timeperiod']),
-            models.Index(fields=['category', 'timeperiod', 'rank']),
-            models.Index(fields=['snapshottime']),
-        ]
-        
-        # Prevent duplicate stats for same wallet/category/period
-        unique_together = [
-            ['wallets', 'category', 'timeperiod']
-        ]
-    
-    def __str__(self):
-        return f"{self.wallets.username} - {self.category} ({self.timeperiod}): Rank #{self.rank}"
-    
-    def __repr__(self):
-        return f"<WalletCategoryStat: {self.wallets_id} {self.category} {self.timeperiod}>"
-    
-    @property
-    def pnl_formatted(self):
-        """Format P&L with + or - sign"""
-        # Check if pnl is None first
-        if self.pnl is None:
-            return "$0.00"
-        
-        if self.pnl >= 0:
-            return f"+${self.pnl:,.2f}"
-        return f"-${abs(self.pnl):,.2f}"
-    
-    @property
-    def volume_formatted(self):
-        """Format volume with commas"""
-        # Check if volume is None first
-        if self.volume is None:
-            return "$0.00"
-        
-        return f"${self.volume:,.2f}"
-    
-    @property
-    def roi_percentage(self):
-        """Calculate ROI percentage"""
-        # Check if both values exist and volume > 0
-        if self.volume is not None and self.pnl is not None and self.volume > 0:
-            return (self.pnl / self.volume) * 100
-        return 0
-        
     

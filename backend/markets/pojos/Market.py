@@ -50,10 +50,26 @@ class Market:
     
     # Trades to be persisted (to be bulk persisted at end)
     tradesToPersist: List = field(default_factory=list)
-    
+
+    # PNL calculation fields (calculated from trades or API)
+    calculatedAmountInvested: Optional[Decimal] = None
+    calculatedAmountTakenOut: Optional[Decimal] = None
+    calculatedPnl: Optional[Decimal] = None
+
+    # Position count tracking
+    openPositionCount: int = 0
+    closedPositionCount: int = 0
+
+    # Filtering flag - whether this market should be included in wallet filtering PNL
+    includeInFiltering: bool = False
+
     def addPosition(self, position: 'Position') -> None:
-        """Add a position to this market."""
+        """Add a position to this market and update counts."""
         self.positions.append(position)
+        if position.positionStatus.name == 'OPEN':
+            self.openPositionCount += 1
+        else:
+            self.closedPositionCount += 1
     
     def addDailyTrades(self, dailyTrades: DailyTrades) -> None:
         """Add daily trades for a specific date"""
@@ -100,6 +116,16 @@ class Market:
     def addTradesToPersist(self, trades: List) -> None:
         """Add trades to be bulk persisted later"""
         self.tradesToPersist.extend(trades)
+
+    def hasOpenPositions(self) -> bool:
+        """Check if this market has any open positions."""
+        return self.openPositionCount > 0
+
+    def setPnlCalculations(self, amountInvested: Decimal, amountTakenOut: Decimal, pnl: Decimal) -> None:
+        """Set calculated PNL metrics for this market."""
+        self.calculatedAmountInvested = amountInvested
+        self.calculatedAmountTakenOut = amountTakenOut
+        self.calculatedPnl = pnl
 
 
 # Avoid circular import

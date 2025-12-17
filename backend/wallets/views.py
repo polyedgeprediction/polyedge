@@ -8,7 +8,6 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.request import Request
-from .WalletsAPI import WalletsAPI
 from .implementations.polymarket.Constants import (
     TIME_PERIOD_DAY,
     TIME_PERIOD_WEEK,
@@ -46,93 +45,6 @@ class APIResponseBuilder:
             'errorMessage': errorMessage,
             **kwargs
         }
-
-
-def _validateTimePeriod(timePeriod: str) -> tuple[bool, str]:
-    """
-    Validate time period parameter.
-    
-    Args:
-        timePeriod: Time period string to validate
-        
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
-    if not timePeriod:
-        return False, "timePeriod is required"
-    
-    if timePeriod not in VALID_TIME_PERIODS:
-        validOptions = ', '.join(sorted(VALID_TIME_PERIODS))
-        return False, f"Invalid timePeriod '{timePeriod}'. Valid options: {validOptions}"
-    
-    return True, ""
-
-
-@api_view(['POST'])
-def fetchAllPolymarketCategories(request: Request) -> Response:
-    """
-    Fetch and persist all Polymarket smart money wallet categories.
-    
-    Endpoint: POST /api/smartwallets/fetch
-    
-    Request Body:
-        {
-            "timePeriod": "month"  // Options: "day", "week", "month" (default: "month")
-        }
-    
-    Response:
-        Success (200):
-        {
-            "success": true,
-            "totalProcessed": 150
-        }
-        
-        Error (400/500):
-        {
-            "success": false,
-            "errorMessage": "Error description"
-        }
-    """
-    try:
-        # Extract and validate request parameters
-        timePeriod = request.data.get('timePeriod', DEFAULT_TIME_PERIOD)
-        
-        isValid, errorMessage = _validateTimePeriod(timePeriod)
-        if not isValid:
-            logger.warning(f"Invalid request: {errorMessage}")
-            return Response(
-                APIResponseBuilder.error(errorMessage),
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Execute business logic
-        logger.info(f"Initiating wallet fetch for all Polymarket categories (timePeriod={timePeriod})")
-        
-        walletsAPI = WalletsAPI()
-        result = walletsAPI.fetchAllPolymarketCategories(timePeriod=timePeriod)
-        
-        # Handle business logic response
-        if not result.success:
-            logger.error(f"Wallet fetch failed: {result.errorMessage}")
-            return Response(
-                APIResponseBuilder.error(result.errorMessage),
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-        logger.info(f"Successfully processed {result.totalProcessed} wallets")
-        return Response(
-            APIResponseBuilder.success(totalProcessed=result.totalProcessed),
-            status=status.HTTP_200_OK
-        )
-        
-    except Exception as e:
-        # Catch-all for unexpected errors
-        logger.exception("Unexpected error in fetchAllPolymarketCategories")
-        return Response(
-            APIResponseBuilder.error(f"Internal server error: {str(e)}"),
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
 
 @api_view(['POST'])
 def evaluateWalletsFromLeaderboard(request: Request) -> Response:
@@ -211,73 +123,103 @@ def evaluateWalletsFromLeaderboard(request: Request) -> Response:
 @api_view(['POST'])
 def evaluateWalletsOnDemand(request: Request) -> Response:
     """
-    Filter specific wallet addresses through the filtering system.
-    
+    Evaluate and persist specific wallet addresses through the filtering pipeline.
+
     Endpoint: POST /api/smartwallets/filter
-    
-    Request: {"walletAddresses": ["0xabc123...", "0xdef456..."]}
-    Response: Same format as discover endpoint with filtering results
+
+    Request Body:
+        {
+            "walletAddresses": ["0xabc123...", "0xdef456..."]
+        }
+
+    Response:
+        Success (200):
+        {
+            "success": true,
+            "candidates_found": 2,
+            "qualified": 1,
+            "rejected": 1,
+            "wallets_persisted": 1,
+            "positions_persisted": 5,
+            "execution_time_seconds": 12.5,
+            "rejection_reasons": {"activity": 1}
+        }
+
+        Error (400/500):
+        {
+            "success": false,
+            "errorMessage": "Error description"
+        }
     """
+    startTime = time.time()
+
     try:
         walletAddresses = request.data.get('walletAddresses', [])
-        
-        logger.info(f"SMART_WALLET_DISCOVERY :: Filtering {len(walletAddresses)} specific wallet addresss")
 
-        startTime = time.time()
-        
-        try:
-            # Convert wallet addresses to candidates
-            candidates = [
-                WalletCandidate(
-                    proxyWallet=address,
-                    username=address[:10],
-                    allTimePnl=Decimal('0'),  # Unknown for provided wallets
-                    allTimeVolume=Decimal('0')  # Unknown for provided wallets
-                )
-                for address in walletAddresses
-            ]
-            
-            # Process candidates using new service
-            smart_discovery_service = SmartWalletDiscoveryService()
-            result = smart_discovery_service.evaluateWalletsFromLeaderboard(candidates)
-            
-            # Convert to legacy format for API compatibility
-            result['success'] = True
-            result['qualification_rate_percent'] = round((result['passed_filtering'] / result['total_processed']) * 100, 2) if result['total_processed'] > 0 else 0
-            result['candidates_found'] = result['total_processed']
-            result['qualified'] = result['passed_filtering']
-            result['rejected'] = result['total_processed'] - result['passed_filtering']
-            result['wallets_persisted'] = result['successfully_persisted']
-            result['positions_persisted'] = 0  # Not tracked in new service
-            result['execution_time_seconds'] = round(time.time() - startTime, 2)
-            
-            # Convert failure reasons to legacy format
-            rejection_reasons = {}
-            for failure in result['failed_filtering']:
-                if isinstance(failure, dict) and 'reason' in failure:
-                    reason_key = failure['reason'].split(' |')[0].replace('Insufficient ', '').lower()
-                    rejection_reasons[reason_key] = rejection_reasons.get(reason_key, 0) + 1
-            result['rejection_reasons'] = rejection_reasons
-            
-        except Exception as e:
-            logger.error(f"SMART_WALLET_DISCOVERY :: Error filtering specific wallets: {e}")
-            result = {
+        # Validate input
+        if not walletAddresses:
+            return Response(
+                APIResponseBuilder.error("walletAddresses is required and cannot be empty"),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not isinstance(walletAddresses, list):
+            return Response(
+                APIResponseBuilder.error("walletAddresses must be a list"),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        logger.info("SMART_WALLET_DISCOVERY :: Processing %d wallet(s) on demand", len(walletAddresses))
+
+        # Create candidates from wallet addresses
+        candidates = [
+            WalletCandidate(
+                proxyWallet=address,
+                username=f"User_{address[:8]}",
+                allTimePnl=Decimal('0'),
+                allTimeVolume=Decimal('0'),
+                categories=[]  # Empty - will be populated from event hierarchy if needed
+            )
+            for address in walletAddresses
+        ]
+
+        # Process each candidate through evaluation and persistence pipeline
+        discoveryService = SmartWalletDiscoveryService()
+        metrics = discoveryService.processCandidates(candidates)
+
+        # Build response
+        executionTime = round(time.time() - startTime, 2)
+
+        result = {
+            'success': True,
+            'candidates_found': metrics.totalProcessed,
+            'qualified': metrics.passedEvaluation,
+            'rejected': metrics.rejectedCount,
+            'wallets_persisted': metrics.successfullyPersisted,
+            'positions_persisted': metrics.positionsPersisted,
+            'execution_time_seconds': executionTime,
+            'rejection_reasons': metrics.rejectionReasons
+        }
+
+        logger.info("SMART_WALLET_DISCOVERY :: On-demand processing complete | Qualified: %d | Persisted: %d",
+                   result['qualified'], result['wallets_persisted'])
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        executionTime = round(time.time() - startTime, 2)
+        logger.error("SMART_WALLET_DISCOVERY :: On-demand processing failed: %s", str(e), exc_info=True)
+
+        return Response(
+            {
                 'success': False,
-                'error': str(e),
-                'candidates_found': len(walletAddresses),
+                'errorMessage': str(e),
+                'candidates_found': len(walletAddresses) if 'walletAddresses' in locals() else 0,
                 'qualified': 0,
-                'rejected': len(walletAddresses),
+                'rejected': 0,
                 'wallets_persisted': 0,
                 'positions_persisted': 0,
-                'execution_time_seconds': round(time.time() - startTime, 2)
-            }
-        
-        logger.info(f"SMART_WALLET_DISCOVERY :: Specific wallet filtering completed | Qualified: {result['qualified']} | Persisted: {result['wallets_persisted']}")
-        return Response(result, status=status.HTTP_200_OK)
-        
-    except Exception as e:
-        logger.exception("SMART_WALLET_DISCOVERY :: Error filtering specific wallets: %s", str(e), exc_info=True)
-        return Response(
-            APIResponseBuilder.error(f"SMART_WALLET_DISCOVERY :: Internal server error: {str(e)}"),
+                'execution_time_seconds': executionTime
+            },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

@@ -1,25 +1,30 @@
 """
-Wallet persistence service for managing wallet data storage and updates.
-Handles the complete persistence pipeline for filtered wallets.
+Production-grade Wallet Persistence Service.
+Handles persistence of Event → Market → Position hierarchy with multi-category wallet support.
+
+Key Features:
+- Creates one wallet record per category
+- Persists complete hierarchy: Wallet → Events → Markets → Positions → Trades
+- Atomic transactions with proper rollback
+- Bulk operations for performance
 """
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set
 from decimal import Decimal
 from datetime import datetime
-from django.db import transaction, IntegrityError
+from django.db import transaction
 from django.utils import timezone
 
 from wallets.models import Wallet
 from wallets.enums import WalletType
-from events.models import Event
-from markets.models import Market
-from positions.models import Position
+from events.models import Event as EventModel
+from markets.models import Market as MarketModel
+from positions.models import Position as PositionModel
 from trades.models import Trade, Batch
-from positions.enums.PositionStatus import PositionStatus
-from positions.enums.TradeStatus import TradeStatus
-from wallets.pojos.WalletFilterResult import WalletEvaluvationResult
-from wallets.pojos.WalletCandidate import WalletCandidate
-from positions.pojos.PolymarketPositionResponse import PolymarketPositionResponse
+from wallets.pojos.WalletEvaluvationResult import WalletEvaluvationResult
+from events.pojos.Event import Event
+from markets.pojos.Market import Market
+from positions.pojos.Position import Position
 
 logger = logging.getLogger(__name__)
 
@@ -27,374 +32,364 @@ logger = logging.getLogger(__name__)
 class WalletPersistenceService:
     """
     Handles complete persistence pipeline for wallets that pass filtering.
-    
-    Pipeline:
-    1. Persist wallet
-    2. Extract and persist events/markets
-    3. Persist positions with proper market FKs
-    4. Persist trades for needtrades markets
-    5. Create batch records for sync tracking
-    6. Mark wallet as OLD (processed)
+    Supports multi-category wallets (one DB record per category).
     """
-    
+
     @staticmethod
-    def persistWalletFilterResult(result: WalletEvaluvationResult) -> Optional[Wallet]:
-        """
-        Main entry point for persisting a wallet that passed filtering.
-        
-        Returns:
-            Wallet: The persisted wallet object, or None if failed
-        """
-        if not result.passed:
-            logger.warning("Attempted to persist failed wallet result: %s", result.walletAddress[:10])
+    def persistWallet(evaluationResult: WalletEvaluvationResult) -> Optional[List[Wallet]]:
+        if not evaluationResult.passed:
+            logger.info("SMART_WALLET_DISCOVERY :: Attempted to persist failed wallet: %s",
+                       evaluationResult.walletAddress[:10])
             return None
-        
+
         try:
-            with transaction.atomic():
-                # Step 1: Persist wallet
-                wallet = WalletPersistenceService._persistWallet(result)
-                if not wallet:
-                    return None
-                
-                # Step 2: Extract and persist events/markets
-                eventLookup, marketLookup = WalletPersistenceService._persistEventsAndMarkets(
-                    result.needtradesMarkets, result.dontneedtradesMarkets
-                )
-                
-                # Step 3: Persist positions with proper market FKs
-                WalletPersistenceService._persistPositions(
-                    wallet, result.needtradesMarkets, result.dontneedtradesMarkets, marketLookup
-                )
-                
-                # Step 4: Persist trades for needtrades markets
-                WalletPersistenceService._persistTrades(
-                    wallet, result.needtradesMarkets, marketLookup
-                )
-                
-                # Step 5: Create batch records for sync tracking
-                WalletPersistenceService._createBatchRecords(
-                    wallet, result.needtradesMarkets.keys(), marketLookup
-                )
-                
-                # Step 6: Mark wallet as OLD (processed)
-                wallet.wallettype = WalletType.OLD
-                wallet.save()
-                
-                logger.info("Successfully persisted wallet: %s | Markets: %d | Positions: %d",
-                           wallet.proxywallet[:10], len(marketLookup), 
-                           len(result.openPositions) + len(result.closedPositions))
-                
-                return wallet
-                
+            categories = WalletPersistenceService.getCategoriesFromCandidate(evaluationResult)
+            existingWalletsMap = WalletPersistenceService.getExistingCategoriesForWallet(evaluationResult.walletAddress)
+            wallets = WalletPersistenceService.processCategories(evaluationResult,categories,existingWalletsMap)
+            logger.info("SMART_WALLET_DISCOVERY :: Complete | Wallets processed: %d | Categories: %s",len(wallets) if wallets else 0, categories)
+            return wallets if wallets else None
+
         except Exception as e:
-            logger.error("Failed to persist wallet %s: %s", result.walletAddress[:10], str(e), exc_info=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Failed | Wallet: %s | Error: %s",evaluationResult.walletAddress[:10], str(e), exc_info=True)
             return None
-    
+
     @staticmethod
-    def _persistWallet(result: WalletEvaluvationResult) -> Optional[Wallet]:
+    def getCategoriesFromCandidate(evaluationResult: WalletEvaluvationResult) -> List[Optional[str]]:
+        """Extract categories from candidate. Returns [None] if no categories found."""
+        candidate = evaluationResult.candidate
+        categories = candidate.categories if candidate and candidate.categories else []
+
+        if not categories:
+            logger.info("SMART_WALLET_DISCOVERY :: No categories found for wallet: %s",evaluationResult.walletAddress[:10])
+            return [None]
+
+        return categories
+
+    @staticmethod
+    def processCategories(evaluationResult: WalletEvaluvationResult,categories: List[Optional[str]],existingWalletsMap: Dict[Optional[str], Wallet]) -> List[Wallet]:
+        """Process each category - either reactivate existing or persist new wallet."""
+        wallets = []
+
+        for category in categories:
+            wallet = WalletPersistenceService.processSingleCategory(evaluationResult,category,existingWalletsMap)
+
+            if wallet:
+                wallets.append(wallet)
+
+        return wallets
+
+    @staticmethod
+    def processSingleCategory(evaluationResult: WalletEvaluvationResult,category: Optional[str],existingWalletsMap: Dict[Optional[str], Wallet]) -> Optional[Wallet]:
+        """Process single category - check existing or persist new."""
+        existingWallet = existingWalletsMap.get(category)
+
+        if existingWallet:
+            return WalletPersistenceService.handleExistingWallet(existingWallet,evaluationResult.walletAddress,category)
+        return WalletPersistenceService.persistNewWallet(evaluationResult, category)
+
+    @staticmethod
+    def handleExistingWallet(existingWallet: Wallet,walletAddress: str,category: Optional[str]) -> Wallet:
+        """Handle existing wallet - reactivate if inactive, otherwise return as-is."""
+        if existingWallet.isactive == 0:
+            existingWallet.isactive = 1
+            existingWallet.save()
+            logger.info("SMART_WALLET_DISCOVERY :: Wallet reactivated | Address: %s | Category: %s",
+                       walletAddress[:10], category or "None")
+        else:
+            logger.info("SMART_WALLET_DISCOVERY :: Wallet exists and active | Address: %s | Category: %s",
+                       walletAddress[:10], category or "None")
+
+        return existingWallet
+
+    @staticmethod
+    def persistNewWallet(evaluationResult: WalletEvaluvationResult,category: Optional[str]) -> Optional[Wallet]:
+        """Persist new wallet for category with full hierarchy."""
+        with transaction.atomic():
+            wallet = WalletPersistenceService.persistWalletForCategory(evaluationResult,category)
+
+            if wallet:
+                logger.info("SMART_WALLET_DISCOVERY :: Wallet persisted | Category: %s | Address: %s",category or "None", wallet.proxywallet[:10])
+            return wallet
+
+    @staticmethod
+    def persistWalletForCategory(evaluationResult: WalletEvaluvationResult,category: Optional[str]) -> Optional[Wallet]:
         """
-        Persist wallet from candidate data.
+        Persist wallet and complete hierarchy for a specific category.
+
+        Pipeline:
+        1. Create/update wallet record
+        2. Persist events
+        3. Persist markets
+        4. Persist positions
+        5. Persist trades
+        6. Create batch records
         """
         try:
-            candidate = result.candidate
+            candidate = evaluationResult.candidate
             if not candidate:
-                logger.error("No candidate data in result for wallet: %s", result.walletAddress[:10])
+                logger.info("SMART_WALLET_DISCOVERY :: No candidate data")
                 return None
-            
-            # Try to get existing wallet first
+
+            # Step 1: Create/update wallet
+            wallet = WalletPersistenceService.createWalletRecord(candidate, category)
+            if not wallet:
+                return None
+
+            eventHierarchy = evaluationResult.eventHierarchy
+
+            # Step 2: Persist events and get lookup
+            eventLookup = WalletPersistenceService.persistEvents(eventHierarchy)
+
+            # Step 3: Persist markets and get lookup
+            marketLookup = WalletPersistenceService.persistMarkets(eventHierarchy,eventLookup)
+
+            # Step 4: Persist positions
+            WalletPersistenceService.persistPositions(wallet,eventHierarchy,marketLookup)
+
+            # Step 5: Persist trades
+            WalletPersistenceService.persistTrades(wallet,eventHierarchy,marketLookup)
+
+            # Step 6: Create batch records
+            WalletPersistenceService.createBatchRecords(wallet,eventHierarchy,marketLookup)
+
+            # Mark wallet as OLD (processed)
+            wallet.wallettype = WalletType.OLD
+            wallet.save()
+
+            return wallet
+
+        except Exception as e:
+            logger.info("SMART_WALLET_DISCOVERY :: Category persistence failed | Category: %s | Error: %s",category, str(e), exc_info=True)
+            return None
+
+    @staticmethod
+    def getExistingCategoriesForWallet(walletAddress: str) -> Dict[Optional[str], Wallet]:
+        """
+        Fetch all wallet records for address and return as category map.
+        Single query instead of N queries.
+        """
+        try:
+            existingWallets = Wallet.objects.filter(proxywallet=walletAddress).all()
+            return {wallet.category: wallet for wallet in existingWallets}
+        except Exception as e:
+            logger.info("SMART_WALLET_DISCOVERY :: Error fetching wallets: %s", str(e))
+            return {}
+
+    @staticmethod
+    def createWalletRecord(candidate, category: Optional[str]) -> Optional[Wallet]:
+        """
+        Create or get wallet record for specific category.
+        Uses proxywallet + category as unique identifier.
+        """
+        try:
+            # For multi-category support, we need unique records per category
+            # Use get_or_create with both proxywallet and category
             wallet, created = Wallet.objects.get_or_create(
                 proxywallet=candidate.proxyWallet,
+                category=category,
                 defaults={
                     'username': candidate.username or f"User_{candidate.proxyWallet[:8]}",
-                    'xusername': getattr(candidate, 'xusername', None),
-                    'verifiedbadge': getattr(candidate, 'verifiedbadge', False),
-                    'profileimage': getattr(candidate, 'profileimage', None),
+                    'xusername': getattr(candidate, 'xUsername', None),
+                    'verifiedbadge': getattr(candidate, 'verifiedBadge', False),
+                    'profileimage': getattr(candidate, 'profileImage', None),
                     'platform': 'polymarket',
-                    'wallettype': WalletType.NEW,  # Will be changed to OLD after processing
+                    'wallettype': WalletType.NEW,
                     'isactive': 1,
                     'firstseenat': timezone.now()
                 }
             )
-            
-            if created:
-                logger.info("Created new wallet: %s (%s)", wallet.username, wallet.proxywallet[:10])
-            else:
-                logger.info("Found existing wallet: %s (%s)", wallet.username, wallet.proxywallet[:10])
-                
+
+            action = "Created" if created else "Found"
+            logger.info("SMART_WALLET_DISCOVERY :: %s wallet | Category: %s | Address: %s",
+                       action, category or "None", wallet.proxywallet[:10])
+
             return wallet
-            
-        except IntegrityError as e:
-            logger.warning("Wallet already exists: %s", result.walletAddress[:10])
-            return Wallet.objects.get(proxywallet=result.walletAddress)
+
         except Exception as e:
-            logger.error("Failed to persist wallet %s: %s", result.walletAddress[:10], str(e))
+            logger.info("SMART_WALLET_DISCOVERY :: Failed to create wallet | Error: %s", str(e))
             return None
-    
+
     @staticmethod
-    def _persistEventsAndMarkets(
-        needtradesMarkets: Dict[str, Dict], 
-        dontneedtradesMarkets: Dict[str, List[PolymarketPositionResponse]]
-    ) -> Tuple[Dict[str, Event], Dict[str, Market]]:
+    def persistEvents(eventHierarchy: Dict[str, Event]) -> Dict[str, EventModel]:
         """
-        Extract events and markets from position data and persist them.
-        
-        Returns:
-            (eventLookup: Dict[eventSlug, Event], marketLookup: Dict[conditionId, Market])
+        Persist all events using bulk operations.
+        1. Fetch existing events (1 query)
+        2. Bulk create new events (1 query)
+        3. Return lookup map
         """
-        eventLookup = {}
-        marketLookup = {}
-        
-        # Collect all positions from both categories
-        allPositions = []
-        
-        for marketData in needtradesMarkets.values():
-            allPositions.extend(marketData['positions'])
-            
-        for positions in dontneedtradesMarkets.values():
-            allPositions.extend(positions)
-        
-        # Extract unique events and markets
-        eventsToCreate = {}
-        marketsToCreate = {}
-        
-        for position in allPositions:
-            # Extract event data (assuming it's in the position response)
-            eventSlug = getattr(position, 'eventSlug', None)
-            if eventSlug and eventSlug not in eventsToCreate:
-                eventsToCreate[eventSlug] = position
-            
-            # Extract market data
-            conditionId = position.conditionId
-            if conditionId not in marketsToCreate:
-                marketsToCreate[conditionId] = position
-        
-        try:
-            # Persist events first
-            for eventSlug, position in eventsToCreate.items():
-                event = WalletPersistenceService._getOrCreateEvent(position, eventSlug)
-                if event:
-                    eventLookup[eventSlug] = event
-            
-            # Persist markets with event references
-            for conditionId, position in marketsToCreate.items():
-                eventSlug = getattr(position, 'eventSlug', None)
-                event = eventLookup.get(eventSlug) if eventSlug else None
-                market = WalletPersistenceService._getOrCreateMarket(position, conditionId, event)
-                if market:
-                    marketLookup[conditionId] = market
-            
-            logger.info("Persisted %d events and %d markets", len(eventLookup), len(marketLookup))
-            
-        except Exception as e:
-            logger.error("Failed to persist events/markets: %s", str(e))
-        
-        return eventLookup, marketLookup
-    
+        if not eventHierarchy:
+            return {}
+
+        eventSlugs = list(eventHierarchy.keys())
+
+        # Fetch existing events in one query
+        existingEvents = EventModel.objects.filter(eventslug__in=eventSlugs).all()
+        existingEventMap = {event.eventslug: event for event in existingEvents}
+
+        # Identify new events to create
+        eventsToCreate = []
+        for eventSlug, event in eventHierarchy.items():
+            if eventSlug not in existingEventMap:
+                eventObj = EventModel(
+                    eventslug=eventSlug,
+                    platformeventid=event.platformEventId or 0,
+                    title=event.title or f'Event {eventSlug}',
+                    description=event.description or '',
+                    liquidity=event.liquidity or Decimal('0'),
+                    volume=event.volume or Decimal('0'),
+                    openInterest=event.openInterest or Decimal('0'),
+                    marketcreatedat=event.marketCreatedAt or timezone.now(),
+                    marketupdatedat=event.marketUpdatedAt or timezone.now(),
+                    competitive=event.competitive or Decimal('0'),
+                    negrisk=1 if event.negRisk else 0,
+                    startdate=event.startDate or timezone.now(),
+                    enddate=event.endDate,
+                    platform='polymarket',
+                    tags=event.tags or []
+                )
+                eventsToCreate.append(eventObj)
+
+        # Bulk create new events
+        if eventsToCreate:
+            EventModel.objects.bulk_create(eventsToCreate, ignore_conflicts=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Created %d new events", len(eventsToCreate))
+
+        # Fetch all events again to get complete lookup (including newly created)
+        allEvents = EventModel.objects.filter(eventslug__in=eventSlugs).all()
+        eventLookup = {event.eventslug: event for event in allEvents}
+
+        logger.info("SMART_WALLET_DISCOVERY :: Events lookup built: %d", len(eventLookup))
+        return eventLookup
+
     @staticmethod
-    def _getOrCreateEvent(position: PolymarketPositionResponse, eventSlug: str) -> Optional[Event]:
+    def persistMarkets(eventHierarchy: Dict[str, Event],eventLookup: Dict[str, EventModel]) -> Dict[str, MarketModel]:
         """
-        Create or get existing event from position data.
+        Persist all markets using bulk operations.
+        1. Collect all market condition IDs
+        2. Fetch existing markets (1 query)
+        3. Bulk create new markets (1 query)
+        4. Return lookup map
         """
-        try:
-            event, created = Event.objects.get_or_create(
-                eventslug=eventSlug,
-                defaults={
-                    'platformeventid': getattr(position, 'platformEventId', 0),
-                    'title': getattr(position, 'eventTitle', f'Event {eventSlug}'),
-                    'description': getattr(position, 'eventDescription', ''),
-                    'liquidity': getattr(position, 'eventLiquidity', Decimal('0')),
-                    'volume': getattr(position, 'eventVolume', Decimal('0')),
-                    'openInterest': getattr(position, 'eventOpenInterest', Decimal('0')),
-                    'marketcreatedat': getattr(position, 'eventCreatedAt', timezone.now()),
-                    'marketupdatedat': getattr(position, 'eventUpdatedAt', timezone.now()),
-                    'competitive': getattr(position, 'competitive', Decimal('0')),
-                    'negrisk': getattr(position, 'negRisk', 0),
-                    'startdate': getattr(position, 'eventStartDate', timezone.now()),
-                    'enddate': getattr(position, 'eventEndDate', None),
-                    'platform': 'polymarket',
-                    'tags': getattr(position, 'eventTags', [])
-                }
-            )
-            
-            if created:
-                logger.debug("Created event: %s", eventSlug)
-            
-            return event
-            
-        except Exception as e:
-            logger.error("Failed to create event %s: %s", eventSlug, str(e))
-            return None
-    
-    @staticmethod
-    def _getOrCreateMarket(position: PolymarketPositionResponse, conditionId: str, event: Optional[Event]) -> Optional[Market]:
-        """
-        Create or get existing market from position data.
-        """
-        try:
-            market, created = Market.objects.get_or_create(
-                platformmarketid=conditionId,
-                defaults={
-                    'eventsid': event,
-                    'marketid': getattr(position, 'marketId', 0),
-                    'marketslug': getattr(position, 'marketSlug', f'market_{conditionId[:10]}'),
-                    'question': getattr(position, 'question', position.title or f'Market {conditionId[:10]}'),
-                    'startdate': getattr(position, 'startDate', timezone.now()),
-                    'enddate': getattr(position, 'endDate', timezone.now()),
-                    'marketcreatedat': getattr(position, 'createdAt', timezone.now()),
-                    'closedtime': getattr(position, 'closedTime', None),
-                    'volume': getattr(position, 'marketVolume', Decimal('0')),
-                    'liquidity': getattr(position, 'marketLiquidity', Decimal('0')),
-                    'competitive': getattr(position, 'competitive', None),
-                    'platform': 'polymarket'
-                }
-            )
-            
-            if created:
-                logger.debug("Created market: %s", conditionId[:10])
-            
-            return market
-            
-        except Exception as e:
-            logger.error("Failed to create market %s: %s", conditionId[:10], str(e))
-            return None
-    
-    @staticmethod
-    def _persistPositions(
-        wallet: Wallet,
-        needtradesMarkets: Dict[str, Dict],
-        dontneedtradesMarkets: Dict[str, List[PolymarketPositionResponse]],
-        marketLookup: Dict[str, Market]
-    ) -> None:
-        """
-        Persist all positions with proper market foreign keys.
-        """
-        positions_to_create = []
-        
-        try:
-            # Process needtrades markets
-            for conditionId, marketData in needtradesMarkets.items():
-                market = marketLookup.get(conditionId)
-                if not market:
-                    logger.warning("No market found for conditionId: %s", conditionId[:10])
-                    continue
-                
-                # Extract already calculated amounts from market data
-                calculatedAmounts = {
-                    'amountInvested': marketData.get('calculatedAmountInvested', Decimal('0')),
-                    'amountOut': marketData.get('calculatedAmountOut', Decimal('0'))
-                }
-                
-                for position in marketData['positions']:
-                    # Trades already fetched during filtering for needtrades markets
-                    pos_obj = WalletPersistenceService._createPositionObject(
-                        wallet, market, position, 
-                        tradesAlreadyFetched=True, 
-                        calculatedAmounts=calculatedAmounts
+        if not eventHierarchy:
+            return {}
+
+        # Collect all condition IDs
+        allConditionIds = []
+        for event in eventHierarchy.values():
+            allConditionIds.extend(event.markets.keys())
+
+        # Fetch existing markets in one query
+        existingMarkets = MarketModel.objects.filter(platformmarketid__in=allConditionIds).all()
+        existingMarketMap = {market.platformmarketid: market for market in existingMarkets}
+
+        # Identify new markets to create
+        marketsToCreate = []
+        for eventSlug, event in eventHierarchy.items():
+            eventModel = eventLookup.get(eventSlug)
+
+            for conditionId, market in event.markets.items():
+                if conditionId not in existingMarketMap:
+                    marketObj = MarketModel(
+                        platformmarketid=conditionId,
+                        eventsid=eventModel,
+                        marketid=market.marketId or 0,
+                        marketslug=market.marketSlug or f'market_{conditionId[:10]}',
+                        question=market.question or f'Market {conditionId[:10]}',
+                        startdate=market.startDate or timezone.now(),
+                        enddate=market.endDate,
+                        marketcreatedat=market.marketCreatedAt or timezone.now(),
+                        closedtime=market.closedTime,
+                        volume=market.volume or Decimal('0'),
+                        liquidity=market.liquidity or Decimal('0'),
+                        competitive=market.competitive,
+                        platform='polymarket'
                     )
-                    if pos_obj:
-                        positions_to_create.append(pos_obj)
-            
-            # Process dontneedtrades markets
-            for conditionId, positions in dontneedtradesMarkets.items():
-                market = marketLookup.get(conditionId)
-                if not market:
-                    logger.warning("No market found for conditionId: %s", conditionId[:10])
-                    continue
-                
-                for position in positions:
-                    # Trades not fetched yet for dontneedtrades markets
-                    pos_obj = WalletPersistenceService._createPositionObject(wallet, market, position, tradesAlreadyFetched=False)
-                    if pos_obj:
-                        positions_to_create.append(pos_obj)
-            
-            # Bulk create positions
-            if positions_to_create:
-                Position.objects.bulk_create(positions_to_create, ignore_conflicts=True)
-                logger.info("Persisted %d positions for wallet %s", len(positions_to_create), wallet.proxywallet[:10])
-            
-        except Exception as e:
-            logger.error("Failed to persist positions for wallet %s: %s", wallet.proxywallet[:10], str(e))
-    
+                    marketsToCreate.append(marketObj)
+
+        # Bulk create new markets
+        if marketsToCreate:
+            MarketModel.objects.bulk_create(marketsToCreate, ignore_conflicts=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Created %d new markets", len(marketsToCreate))
+
+        # Fetch all markets again to get complete lookup
+        allMarkets = MarketModel.objects.filter(platformmarketid__in=allConditionIds).all()
+        marketLookup = {market.platformmarketid: market for market in allMarkets}
+
+        logger.info("SMART_WALLET_DISCOVERY :: Markets lookup built: %d", len(marketLookup))
+        return marketLookup
+
     @staticmethod
-    def _createPositionObject(wallet: Wallet, market: Market, position: PolymarketPositionResponse, tradesAlreadyFetched: bool = False, calculatedAmounts: Dict = None) -> Optional[Position]:
-        """
-        Create a Position object from API response data.
-        
-        Args:
-            wallet: Wallet instance
-            market: Market instance  
-            position: Position response from API
-            tradesAlreadyFetched: True if trades have been fetched during filtering (needtrades markets)
-            calculatedAmounts: Dict with 'amountInvested' and 'amountOut' from market-level calculation
-        """
+    def persistPositions(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel]) -> None:
+        """Persist all positions with proper foreign keys."""
+        positionsToCreate = []
+
+        for event in eventHierarchy.values():
+            for conditionId, market in event.markets.items():
+                marketModel = marketLookup.get(conditionId)
+                if not marketModel:
+                    logger.warning("SMART_WALLET_DISCOVERY :: No market model for: %s", conditionId[:10])
+                    continue
+
+                for position in market.positions:
+                    positionObj = WalletPersistenceService.createPositionObject(wallet,marketModel,position)
+                    if positionObj:
+                        positionsToCreate.append(positionObj)
+
+        # Bulk create positions
+        if positionsToCreate:
+            PositionModel.objects.bulk_create(positionsToCreate, ignore_conflicts=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Positions created: %d | Wallet: %s",
+                       len(positionsToCreate), wallet.proxywallet[:10])
+
+    @staticmethod
+    def createPositionObject(wallet: Wallet,marketModel: MarketModel,position: Position) -> Optional[PositionModel]:
+        """Create Position model object from Position POJO."""
         try:
-            # Determine position status
-            positionStatus = PositionStatus.OPEN if position.currentValue and position.currentValue > 0 else PositionStatus.CLOSED
-            
-            # Determine trade status based on whether trades were already fetched
-            if tradesAlreadyFetched:
-                # For needtrades markets: trades already fetched during filtering, ready for PNL calculation
-                tradeStatus = TradeStatus.NEED_TO_CALCULATE_PNL
-            else:
-                # For dontneedtrades markets: trades not fetched yet
-                tradeStatus = TradeStatus.NEED_TO_PULL_TRADES
-            
-            # Extract calculated amounts if available
-            calculatedAmountInvested = None
-            calculatedAmountOut = None
-            if calculatedAmounts:
-                calculatedAmountInvested = calculatedAmounts.get('amountInvested')
-                calculatedAmountOut = calculatedAmounts.get('amountOut')
-            
-            return Position(
+            return PositionModel(
                 walletsid=wallet,
-                marketsid=market,
-                conditionid=position.conditionId,
+                marketsid=marketModel,
+                conditionid=marketModel.platformmarketid,
                 outcome=position.outcome or 'Yes',
-                oppositeoutcome=WalletPersistenceService._getOppositeOutcome(position.outcome),
-                title=position.title or market.question,
-                positionstatus=positionStatus.value,
-                tradestatus=tradeStatus.value,
-                totalshares=position.size or Decimal('0'),
-                currentshares=position.size or Decimal('0'),
-                averageentryprice=position.avgPrice or Decimal('0'),
-                amountspent=(position.totalBought or Decimal('0')) * (position.avgPrice or Decimal('0')),
-                amountremaining=position.currentValue or Decimal('0'),
-                apirealizedpnl=position.realizedPnl if positionStatus == PositionStatus.CLOSED else None,
-                calculatedamountinvested=calculatedAmountInvested,
-                calculatedamountout=calculatedAmountOut,
-                enddate=WalletPersistenceService._parseDateTime(getattr(position, 'endDate', None)),
-                negativerisk=getattr(position, 'negativeRisk', False)
+                oppositeoutcome=position.oppositeOutcome or 'No',
+                title=position.title or marketModel.question,
+                positionstatus=position.positionStatus.value,
+                tradestatus=position.tradeStatus.value,
+                totalshares=position.totalShares,
+                currentshares=position.currentShares,
+                averageentryprice=position.averageEntryPrice,
+                amountspent=position.amountSpent,
+                amountremaining=position.amountRemaining,
+                apirealizedpnl=position.apiRealizedPnl,
+                calculatedamountinvested=position.calculatedAmountInvested or Decimal('0'),
+                calculatedamountout=position.calculatedAmountTakenOut or Decimal('0'),
+                enddate=position.endDate,
+                negativerisk=position.negativeRisk
             )
-            
+
         except Exception as e:
-            logger.error("Failed to create position object: %s", str(e))
+            logger.error("SMART_WALLET_DISCOVERY :: Failed to create position object: %s", str(e))
             return None
-    
+
     @staticmethod
-    def _persistTrades(
-        wallet: Wallet,
-        needtradesMarkets: Dict[str, Dict],
-        marketLookup: Dict[str, Market]
-    ) -> None:
-        """
-        Persist aggregated trades for needtrades markets.
-        """
-        trades_to_create = []
-        
-        try:
-            for conditionId, marketData in needtradesMarkets.items():
-                market = marketLookup.get(conditionId)
-                if not market:
+    def persistTrades(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel]) -> None:
+        """Persist all trades from markets that have dailyTrades data."""
+        tradesToCreate = []
+
+        for event in eventHierarchy.values():
+            for conditionId, market in event.markets.items():
+                if not market.dailyTrades:
+                    continue  # No trades to persist
+
+                marketModel = marketLookup.get(conditionId)
+                if not marketModel:
                     continue
-                
-                dailyTradesMap = marketData['dailyTradesMap']
-                
-                for date_key, dailyTrades in dailyTradesMap.items():
+
+                # Persist all daily trades
+                for dailyTrades in market.dailyTrades.values():
                     for aggregatedTrade in dailyTrades.getAllTrades():
-                        trade_obj = Trade(
+                        tradeObj = Trade(
                             walletsid=wallet,
-                            marketsid=market,
+                            marketsid=marketModel,
                             conditionid=conditionId,
                             tradetype=aggregatedTrade.tradeType.value,
                             outcome=aggregatedTrade.outcome,
@@ -403,75 +398,37 @@ class WalletPersistenceService:
                             tradedate=aggregatedTrade.tradeDate,
                             transactioncount=aggregatedTrade.transactionCount
                         )
-                        trades_to_create.append(trade_obj)
-            
-            # Bulk create trades
-            if trades_to_create:
-                Trade.objects.bulk_create(trades_to_create, ignore_conflicts=True)
-                logger.info("Persisted %d trade aggregations for wallet %s", len(trades_to_create), wallet.proxywallet[:10])
-            
-        except Exception as e:
-            logger.error("Failed to persist trades for wallet %s: %s", wallet.proxywallet[:10], str(e))
-    
+                        tradesToCreate.append(tradeObj)
+
+        # Bulk create trades
+        if tradesToCreate:
+            Trade.objects.bulk_create(tradesToCreate, ignore_conflicts=True)
+            logger.info("PERSIST :: Trades created: %d | Wallet: %s",
+                       len(tradesToCreate), wallet.proxywallet[:10])
+
     @staticmethod
-    def _createBatchRecords(
-        wallet: Wallet,
-        needtradesMarketIds: List[str],
-        marketLookup: Dict[str, Market]
-    ) -> None:
-        """
-        Create batch records for trade sync tracking.
-        """
-        batches_to_create = []
-        
-        try:
-            for conditionId in needtradesMarketIds:
-                market = marketLookup.get(conditionId)
-                if not market:
+    def createBatchRecords(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel]) -> None:
+        """Create batch records for markets with fetched trades."""
+        batchesToCreate = []
+
+        for event in eventHierarchy.values():
+            for conditionId, market in event.markets.items():
+                if not market.dailyTrades:
+                    continue  # No batch needed
+
+                marketModel = marketLookup.get(conditionId)
+                if not marketModel:
                     continue
-                
-                batch_obj = Batch(
+
+                batchObj = Batch(
                     walletsid=wallet,
-                    marketsid=market,
+                    marketsid=marketModel,
                     latestfetchedtime=int(datetime.now().timestamp()),
                     isactive=1
                 )
-                batches_to_create.append(batch_obj)
-            
-            # Bulk create batches
-            if batches_to_create:
-                Batch.objects.bulk_create(batches_to_create, ignore_conflicts=True)
-                logger.info("Created %d batch records for wallet %s", len(batches_to_create), wallet.proxywallet[:10])
-            
-        except Exception as e:
-            logger.error("Failed to create batch records for wallet %s: %s", wallet.proxywallet[:10], str(e))
-    
-    @staticmethod
-    def _getOppositeOutcome(outcome: Optional[str]) -> str:
-        """
-        Get the opposite outcome for binary markets.
-        """
-        if not outcome:
-            return 'No'
-        
-        outcome_lower = outcome.lower()
-        if outcome_lower in ['yes', 'y', '1', 'true']:
-            return 'No'
-        elif outcome_lower in ['no', 'n', '0', 'false']:
-            return 'Yes'
-        else:
-            return 'No'  # Default fallback
-    
-    @staticmethod
-    def _parseDateTime(date_str: Optional[str]) -> Optional[datetime]:
-        """
-        Parse datetime string safely.
-        """
-        if not date_str:
-            return None
-        
-        try:
-            from dateutil import parser as date_parser
-            return date_parser.parse(date_str)
-        except Exception:
-            return None
+                batchesToCreate.append(batchObj)
+
+        # Bulk create batches
+        if batchesToCreate:
+            Batch.objects.bulk_create(batchesToCreate, ignore_conflicts=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Batch records created: %d | Wallet: %s",len(batchesToCreate), wallet.proxywallet[:10])
