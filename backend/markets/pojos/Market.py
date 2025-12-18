@@ -60,9 +60,6 @@ class Market:
     openPositionCount: int = 0
     closedPositionCount: int = 0
 
-    # Filtering flag - whether this market should be included in wallet filtering PNL
-    includeInFiltering: bool = False
-
     def addPosition(self, position: 'Position') -> None:
         """Add a position to this market and update counts."""
         self.positions.append(position)

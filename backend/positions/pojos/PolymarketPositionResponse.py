@@ -4,6 +4,7 @@ POJO for Polymarket API position response.
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
+from positions.enums.PositionStatus import PositionStatus
 
 
 @dataclass
@@ -23,27 +24,28 @@ class PolymarketPositionResponse:
     totalBought: Decimal
     endDate: Optional[str]
     negativeRisk: bool
-    
+    positionType: PositionStatus  # Set at fetch time to avoid endDate parsing issues
+
     # Open position specific fields
     size: Optional[Decimal] = None
     currentValue: Optional[Decimal] = None
-    
+
     # Closed position specific fields
     realizedPnl: Optional[Decimal] = None
     timestamp: Optional[int] = None
-    
+
     # Asset ID (outcome token) - critical for trade filtering
     asset: Optional[str] = None
     
     @staticmethod
-    def fromAPIResponse(data: dict, isOpen: bool) -> 'PolymarketPositionResponse':
+    def fromAPIResponse(data: dict, positionType: PositionStatus) -> 'PolymarketPositionResponse':
         """
         Convert API response dict to POJO.
-        
+
         Args:
             data: Raw API response dictionary
-            isOpen: Whether this is an open or closed position
-            
+            positionType: PositionStatus enum value (OPEN or CLOSED)
+
         Returns:
             PolymarketPositionResponse instance
         """
@@ -59,6 +61,7 @@ class PolymarketPositionResponse:
             totalBought=Decimal(str(data.get('totalBought', 0))),
             endDate=data.get('endDate'),
             negativeRisk=data.get('negativeRisk', False),
+            positionType=positionType,
             size=Decimal(str(data.get('size', 0))),
             currentValue=Decimal(str(data.get('currentValue', 0))),
             realizedPnl=Decimal(str(data.get('realizedPnl', 0))),

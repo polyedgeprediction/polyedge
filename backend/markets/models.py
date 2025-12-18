@@ -52,6 +52,8 @@ class Market(models.Model):
     )
 
     enddate = models.DateTimeField(
+        null=True,
+        blank=True,
         help_text="Market end date"
     )
 

@@ -212,49 +212,49 @@ class WalletPersistenceService:
     @staticmethod
     def persistEvents(eventHierarchy: Dict[str, Event]) -> Dict[str, EventModel]:
         """
-        Persist all events using bulk operations.
-        1. Fetch existing events (1 query)
-        2. Bulk create new events (1 query)
-        3. Return lookup map
+        Persist all events using bulk upsert.
+        1. Bulk create/update all events (1 query)
+        2. Fetch all events for lookup (1 query)
         """
         if not eventHierarchy:
             return {}
 
         eventSlugs = list(eventHierarchy.keys())
 
-        # Fetch existing events in one query
-        existingEvents = EventModel.objects.filter(eventslug__in=eventSlugs).all()
-        existingEventMap = {event.eventslug: event for event in existingEvents}
-
-        # Identify new events to create
-        eventsToCreate = []
+        # Prepare all events for upsert (both new and existing)
+        eventsToUpsert = []
         for eventSlug, event in eventHierarchy.items():
-            if eventSlug not in existingEventMap:
-                eventObj = EventModel(
-                    eventslug=eventSlug,
-                    platformeventid=event.platformEventId or 0,
-                    title=event.title or f'Event {eventSlug}',
-                    description=event.description or '',
-                    liquidity=event.liquidity or Decimal('0'),
-                    volume=event.volume or Decimal('0'),
-                    openInterest=event.openInterest or Decimal('0'),
-                    marketcreatedat=event.marketCreatedAt or timezone.now(),
-                    marketupdatedat=event.marketUpdatedAt or timezone.now(),
-                    competitive=event.competitive or Decimal('0'),
-                    negrisk=1 if event.negRisk else 0,
-                    startdate=event.startDate or timezone.now(),
-                    enddate=event.endDate,
-                    platform='polymarket',
-                    tags=event.tags or []
-                )
-                eventsToCreate.append(eventObj)
+            eventObj = EventModel(
+                eventslug=eventSlug,
+                platformeventid=event.platformEventId or 0,
+                title=event.title or f'Event {eventSlug}',
+                description=event.description or '',
+                liquidity=event.liquidity or Decimal('0'),
+                volume=event.volume or Decimal('0'),
+                openInterest=event.openInterest or Decimal('0'),
+                marketcreatedat=event.marketCreatedAt or timezone.now(),
+                marketupdatedat=event.marketUpdatedAt or timezone.now(),
+                competitive=event.competitive or Decimal('0'),
+                negrisk=1 if event.negRisk else 0,
+                startdate=event.startDate or timezone.now(),
+                enddate=event.endDate,
+                platform='polymarket',
+                tags=event.tags or []
+            )
+            eventsToUpsert.append(eventObj)
 
-        # Bulk create new events
-        if eventsToCreate:
-            EventModel.objects.bulk_create(eventsToCreate, ignore_conflicts=True)
-            logger.info("SMART_WALLET_DISCOVERY :: Created %d new events", len(eventsToCreate))
+        # Bulk upsert: insert new, update existing
+        if eventsToUpsert:
+            EventModel.objects.bulk_create(
+                eventsToUpsert,
+                update_conflicts=True,
+                update_fields=['title', 'description', 'liquidity', 'volume', 'openInterest',
+                              'marketupdatedat', 'competitive', 'negrisk', 'enddate'],
+                unique_fields=['eventslug']
+            )
+            logger.info("SMART_WALLET_DISCOVERY :: Upserted %d events", len(eventsToUpsert))
 
-        # Fetch all events again to get complete lookup (including newly created)
+        # Fetch all events for lookup
         allEvents = EventModel.objects.filter(eventslug__in=eventSlugs).all()
         eventLookup = {event.eventslug: event for event in allEvents}
 
@@ -264,11 +264,9 @@ class WalletPersistenceService:
     @staticmethod
     def persistMarkets(eventHierarchy: Dict[str, Event],eventLookup: Dict[str, EventModel]) -> Dict[str, MarketModel]:
         """
-        Persist all markets using bulk operations.
-        1. Collect all market condition IDs
-        2. Fetch existing markets (1 query)
-        3. Bulk create new markets (1 query)
-        4. Return lookup map
+        Persist all markets using bulk upsert.
+        1. Bulk create/update all markets (1 query)
+        2. Fetch all markets for lookup (1 query)
         """
         if not eventHierarchy:
             return {}
@@ -278,40 +276,46 @@ class WalletPersistenceService:
         for event in eventHierarchy.values():
             allConditionIds.extend(event.markets.keys())
 
-        # Fetch existing markets in one query
-        existingMarkets = MarketModel.objects.filter(platformmarketid__in=allConditionIds).all()
-        existingMarketMap = {market.platformmarketid: market for market in existingMarkets}
-
-        # Identify new markets to create
-        marketsToCreate = []
+        # Prepare all markets for upsert (both new and existing)
+        marketsToUpsert = []
         for eventSlug, event in eventHierarchy.items():
             eventModel = eventLookup.get(eventSlug)
 
             for conditionId, market in event.markets.items():
-                if conditionId not in existingMarketMap:
-                    marketObj = MarketModel(
-                        platformmarketid=conditionId,
-                        eventsid=eventModel,
-                        marketid=market.marketId or 0,
-                        marketslug=market.marketSlug or f'market_{conditionId[:10]}',
-                        question=market.question or f'Market {conditionId[:10]}',
-                        startdate=market.startDate or timezone.now(),
-                        enddate=market.endDate,
-                        marketcreatedat=market.marketCreatedAt or timezone.now(),
-                        closedtime=market.closedTime,
-                        volume=market.volume or Decimal('0'),
-                        liquidity=market.liquidity or Decimal('0'),
-                        competitive=market.competitive,
-                        platform='polymarket'
-                    )
-                    marketsToCreate.append(marketObj)
+                # Convert empty strings to None for datetime fields
+                endDate = market.endDate if market.endDate and market.endDate != "" else None
+                closedTime = market.closedTime if market.closedTime and market.closedTime != "" else None
+                startDate = market.startDate if market.startDate and market.startDate != "" else None
+                marketCreatedAt = market.marketCreatedAt if market.marketCreatedAt and market.marketCreatedAt != "" else None
 
-        # Bulk create new markets
-        if marketsToCreate:
-            MarketModel.objects.bulk_create(marketsToCreate, ignore_conflicts=True)
-            logger.info("SMART_WALLET_DISCOVERY :: Created %d new markets", len(marketsToCreate))
+                marketObj = MarketModel(
+                    platformmarketid=conditionId,
+                    eventsid=eventModel,
+                    marketid=market.marketId or 0,
+                    marketslug=market.marketSlug or f'market_{conditionId[:10]}',
+                    question=market.question or f'Market {conditionId[:10]}',
+                    startdate=startDate or timezone.now(),
+                    enddate=endDate,
+                    marketcreatedat=marketCreatedAt or timezone.now(),
+                    closedtime=closedTime,
+                    volume=market.volume or Decimal('0'),
+                    liquidity=market.liquidity or Decimal('0'),
+                    competitive=market.competitive,
+                    platform='polymarket'
+                )
+                marketsToUpsert.append(marketObj)
 
-        # Fetch all markets again to get complete lookup
+        # Bulk upsert: insert new, update existing
+        if marketsToUpsert:
+            MarketModel.objects.bulk_create(
+                marketsToUpsert,
+                update_conflicts=True,
+                update_fields=['question', 'enddate', 'closedtime', 'volume', 'liquidity', 'competitive'],
+                unique_fields=['platformmarketid']
+            )
+            logger.info("SMART_WALLET_DISCOVERY :: Upserted %d markets", len(marketsToUpsert))
+
+        # Fetch all markets for lookup
         allMarkets = MarketModel.objects.filter(platformmarketid__in=allConditionIds).all()
         marketLookup = {market.platformmarketid: market for market in allMarkets}
 
@@ -345,6 +349,9 @@ class WalletPersistenceService:
     def createPositionObject(wallet: Wallet,marketModel: MarketModel,position: Position) -> Optional[PositionModel]:
         """Create Position model object from Position POJO."""
         try:
+            # Convert empty string to None for datetime field
+            endDate = position.endDate if position.endDate and position.endDate != "" else None
+
             return PositionModel(
                 walletsid=wallet,
                 marketsid=marketModel,
@@ -360,9 +367,12 @@ class WalletPersistenceService:
                 amountspent=position.amountSpent,
                 amountremaining=position.amountRemaining,
                 apirealizedpnl=position.apiRealizedPnl,
+                realizedpnl=position.realizedPnl or Decimal('0'),
+                unrealizedpnl=position.unrealizedPnl or Decimal('0'),
                 calculatedamountinvested=position.calculatedAmountInvested or Decimal('0'),
                 calculatedamountout=position.calculatedAmountTakenOut or Decimal('0'),
-                enddate=position.endDate,
+                calculatedcurrentvalue=position.calculatedCurrentValue or Decimal('0'),
+                enddate=endDate,
                 negativerisk=position.negativeRisk
             )
 

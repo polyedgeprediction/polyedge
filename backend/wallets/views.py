@@ -129,11 +129,13 @@ def evaluateWalletsOnDemand(request: Request) -> Response:
 
     Request Body:
         {
-            "walletAddresses": ["0xabc123...", "0xdef456..."]
+            "wallets": [
+                {"address": "0xabc123...", "category": "Politics"},
+                {"address": "0xdef456...", "category": "Sports"}
+            ]
         }
 
     Response:
-        Success (200):
         {
             "success": true,
             "candidates_found": 2,
@@ -144,46 +146,33 @@ def evaluateWalletsOnDemand(request: Request) -> Response:
             "execution_time_seconds": 12.5,
             "rejection_reasons": {"activity": 1}
         }
-
-        Error (400/500):
-        {
-            "success": false,
-            "errorMessage": "Error description"
-        }
     """
     startTime = time.time()
 
     try:
-        walletAddresses = request.data.get('walletAddresses', [])
+        wallets = request.data.get('wallets', [])
 
-        # Validate input
-        if not walletAddresses:
+        if not wallets or not isinstance(wallets, list):
             return Response(
-                APIResponseBuilder.error("walletAddresses is required and cannot be empty"),
+                APIResponseBuilder.error("wallets must be a non-empty list"),
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if not isinstance(walletAddresses, list):
-            return Response(
-                APIResponseBuilder.error("walletAddresses must be a list"),
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        logger.info("SMART_WALLET_DISCOVERY :: Processing %d wallet(s) on demand", len(wallets))
 
-        logger.info("SMART_WALLET_DISCOVERY :: Processing %d wallet(s) on demand", len(walletAddresses))
-
-        # Create candidates from wallet addresses
+        # Create candidates
         candidates = [
             WalletCandidate(
-                proxyWallet=address,
-                username=f"User_{address[:8]}",
+                proxyWallet=w['address'],
+                username=f"User_{w['address'][:8]}",
                 allTimePnl=Decimal('0'),
                 allTimeVolume=Decimal('0'),
-                categories=[]  # Empty - will be populated from event hierarchy if needed
+                categories=[w['category']] if 'category' in w else []
             )
-            for address in walletAddresses
+            for w in wallets
         ]
 
-        # Process each candidate through evaluation and persistence pipeline
+        # Process through evaluation and persistence
         discoveryService = SmartWalletDiscoveryService()
         metrics = discoveryService.processCandidates(candidates)
 
@@ -214,7 +203,7 @@ def evaluateWalletsOnDemand(request: Request) -> Response:
             {
                 'success': False,
                 'errorMessage': str(e),
-                'candidates_found': len(walletAddresses) if 'walletAddresses' in locals() else 0,
+                'candidates_found': len(wallets) if 'wallets' in locals() else 0,
                 'qualified': 0,
                 'rejected': 0,
                 'wallets_persisted': 0,
