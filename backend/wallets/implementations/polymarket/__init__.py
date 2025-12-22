@@ -1,5 +1,4 @@
-from .PolymarketTranslator import PolymarketTranslator
-from .PolymarketSmartMoneyParser import PolymarketSmartMoneyParser
+
 from .Constants import (
     SMART_MONEY_CATEGORIES,
     TIME_PERIOD_MONTH,

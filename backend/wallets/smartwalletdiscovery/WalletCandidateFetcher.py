@@ -35,71 +35,70 @@ class WalletCandidateFetcher:
     def fetchCandidates(self, minPnl: float) -> List[WalletCandidate]:
         """
         Paginate through leaderboard until PNL drops below threshold.
-        
+        Tracks categories for each wallet across multiple category leaderboards.
+
         API: /v1/leaderboard?timePeriod=all&orderBy=PNL
-        
+
         Stops when:
         - PNL < minPnl threshold
         - No more results
-        
-        Returns list of WalletCandidate POJOs.
+
+        Returns list of WalletCandidate POJOs with categories populated.
         """
-        candidates = []
-        seenWallets = set()  # Efficient O(1) duplicate detection
-        currentOffset = 0
+        seenWallets = {}  # Dict[walletAddress, WalletCandidate] for category tracking
         limit = 50
 
         # Use all available categories to maximize coverage
         categories = SMART_MONEY_CATEGORIES
-        
-        logger.info("WALLET_DISCOVERY_SCHEDULER :: Starting candidate discovery | MinPNL: %d", minPnl)
-        
+
+        logger.info("SMART_WALLET_DISCOVERY :: Starting candidate discovery | MinPNL: %d", minPnl)
+
         for category in categories:
-            logger.info("WALLET_DISCOVERY_SCHEDULER :: Fetching category: %s", category)
-            
+            logger.info("SMART_WALLET_DISCOVERY :: Fetching category: %s", category)
+
             categoryOffset = 0
-            
+
             while True:
                 batchData = self._fetchPage(category, categoryOffset, limit)
-                
+
                 if not batchData:
-                    logger.info("WALLET_DISCOVERY_SCHEDULER :: No more data for category: %s", category)
+                    logger.info("SMART_WALLET_DISCOVERY :: No more data for category: %s", category)
                     break
-                
+
                 foundLowPnl = False
-                
+
                 for walletData in batchData:
                     pnl = float(walletData.get('pnl', 0))
-                    
+
                     if pnl < minPnl:
-                        logger.info(
-                            "WALLET_DISCOVERY_SCHEDULER :: PNL threshold reached | Category: %s | PNL: %.2f | MinPNL: %.2f",
-                            category, pnl, minPnl
-                        )
+                        logger.info("SMART_WALLET_DISCOVERY :: PNL threshold reached | Category: %s | PNL: %.2f | MinPNL: %.2f",category, pnl, minPnl)
                         foundLowPnl = True
                         break
-                    
-                    candidate = self._parseToCandidate(walletData)
-                    
-                    # Avoid duplicates across categories with O(1) lookup
-                    if candidate.proxyWallet not in seenWallets:
-                        seenWallets.add(candidate.proxyWallet)
-                        candidates.append(candidate)
-                
+
+                    walletAddress = walletData['proxyWallet']
+
+                    if walletAddress in seenWallets:
+                        # Wallet seen in another category - append category
+                        if category not in seenWallets[walletAddress].categories:
+                            seenWallets[walletAddress].categories.append(category)
+                    else:
+                        # New wallet - create candidate and add category
+                        candidate = self._parseToCandidate(walletData, category)
+                        seenWallets[walletAddress] = candidate
+
                 if foundLowPnl:
                     break
-                
+
                 categoryOffset += limit
-                
+
                 if len(batchData) < limit:
-                    logger.info("WALLET_DISCOVERY_SCHEDULER :: Last batch for category: %s | Records: %d", 
-                              category, len(batchData))
+                    logger.info("SMART_WALLET_DISCOVERY :: Last batch for category: %s | Records: %d",category, len(batchData))
                     break
-                    
                 # Rate limiting
                 time.sleep(0.1)
-        
-        logger.info("WALLET_DISCOVERY_SCHEDULER :: Discovery completed | Total candidates: %d", len(candidates))
+
+        candidates = list(seenWallets.values())
+        logger.info("SMART_WALLET_DISCOVERY :: Discovery completed | Total candidates: %d", len(candidates))
         return candidates
 
     def _fetchPage(self, category: str, offset: int, limit: int = 50) -> List[dict]:
@@ -142,10 +141,11 @@ class WalletCandidateFetcher:
         
         return []
 
-    def _parseToCandidate(self, apiResponse: dict) -> WalletCandidate:
+    def _parseToCandidate(self, apiResponse: dict, category: str) -> WalletCandidate:
         """
         Convert API response dict to WalletCandidate POJO.
         Extract: proxyWallet, username, pnl, volume, profileImage, etc.
+        Includes the category this wallet was found in.
         """
         return WalletCandidate(
             proxyWallet=apiResponse['proxyWallet'],
@@ -155,5 +155,6 @@ class WalletCandidateFetcher:
             profileImage=apiResponse.get('profileImage'),
             xUsername=apiResponse.get('xUsername'),
             verifiedBadge=apiResponse.get('verifiedBadge', False),
-            rank=apiResponse.get('rank')
+            rank=apiResponse.get('rank'),
+            categories=[category]
         )

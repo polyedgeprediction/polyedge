@@ -13,6 +13,7 @@ from positions.implementations.polymarket.Constants import (
     DEFAULT_RETRY_DELAY_SECONDS
 )
 from positions.pojos.PolymarketPositionResponse import PolymarketPositionResponse
+from positions.enums.PositionStatus import PositionStatus
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class ClosedPositionAPI:
             
             # Convert API response to POJOs immediately
             positionPojos = [
-                PolymarketPositionResponse.fromAPIResponse(data, isOpen=False) 
+                PolymarketPositionResponse.fromAPIResponse(data, PositionStatus.CLOSED)
                 for data in positions
             ]
             allPositions.extend(positionPojos)
@@ -64,6 +65,7 @@ class ClosedPositionAPI:
             
             # Move to next page
             offset += limit
+            logger.info("CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s | Offset: %d", len(allPositions), walletAddress[:10], offset)
         
         logger.info(
             "CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s",
@@ -89,7 +91,7 @@ class ClosedPositionAPI:
         
         # Convert API response to POJOs
         positionPojos = [
-            PolymarketPositionResponse.fromAPIResponse(data, isOpen=False) 
+            PolymarketPositionResponse.fromAPIResponse(data, PositionStatus.CLOSED)
             for data in positions
         ]
         
