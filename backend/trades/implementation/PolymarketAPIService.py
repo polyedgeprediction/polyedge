@@ -40,7 +40,7 @@ class PolymarketAPIService:
         latestTimestamp = None
         offset = 0
         
-        logMsg = f"FETCH_TRADES_SCHEDULER :: Trade API Fetch Started{logPrefix}: {proxyWallet} - {conditionId}"
+        logMsg = f"SMART_WALLET_DISCOVERY :: Trade API Fetch Started{logPrefix}: {proxyWallet} - {conditionId}"
         logger.info(logMsg)
         
         # Build API call parameters - only include timestamps if provided
@@ -82,7 +82,7 @@ class PolymarketAPIService:
             offset += PolymarketAPIService.DEFAULT_LIMIT
             time.sleep(PolymarketAPIService.RATE_LIMIT_DELAY)
         
-        logger.info(f"FETCH_TRADES_SCHEDULER :: Completed{logPrefix}: {proxyWallet} - {conditionId} - {len(allTrades)}")
+        logger.info(f"SMART_WALLET_DISCOVERY :: Completed{logPrefix}: {proxyWallet} - {conditionId} - {len(allTrades)}")
         return allTrades, latestTimestamp
     
     @staticmethod
