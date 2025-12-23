@@ -67,11 +67,7 @@ class ClosedPositionAPI:
             offset += limit
             logger.info("CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s | Offset: %d", len(allPositions), walletAddress[:10], offset)
         
-        logger.info(
-            "CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s",
-            len(allPositions),
-            walletAddress[:10]
-        )
+        logger.info("CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s",len(allPositions),walletAddress[:10])
         
         return allPositions
 

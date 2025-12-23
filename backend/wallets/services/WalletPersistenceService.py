@@ -1,12 +1,14 @@
 """
 Production-grade Wallet Persistence Service.
-Handles persistence of Event → Market → Position hierarchy with multi-category wallet support.
+Handles persistence of Event → Market → Position hierarchy with wallet-level PnL calculation.
 
 Key Features:
-- Creates one wallet record per category
+- Single wallet record per address with comma-separated categories
+- Categories are merged, deduplicated, and sorted alphabetically
 - Persists complete hierarchy: Wallet → Events → Markets → Positions → Trades
 - Atomic transactions with proper rollback
 - Bulk operations for performance
+- Thread-safe persistence with database locking
 """
 import logging
 from typing import Dict, List, Optional, Set
@@ -15,8 +17,9 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 
-from wallets.models import Wallet
+from wallets.models import Wallet, Lock
 from wallets.enums import WalletType
+from wallets.Constants import SMART_WALLET_DISCOVERY
 from events.models import Event as EventModel
 from markets.models import Market as MarketModel
 from positions.models import Position as PositionModel
@@ -36,93 +39,190 @@ class WalletPersistenceService:
     """
 
     @staticmethod
-    def persistWallet(evaluationResult: WalletEvaluvationResult) -> Optional[List[Wallet]]:
+    def acquireLock(processName: str):
+        """
+        Acquire database lock for thread-safe persistence.
+        Uses select_for_update to ensure only one thread can persist at a time.
+        Creates lock record if it doesn't exist.
+
+        Args:
+            processName: Name of the process acquiring the lock
+        """
+        try:
+            # Get or create the lock record with id=1
+            lock, created = Lock.objects.get_or_create(id=1, defaults={'processname': None})
+
+            # Acquire row-level lock using select_for_update
+            lock = Lock.objects.select_for_update().get(id=1)
+
+            # Update process name to indicate this process holds the lock
+            lock.processname = processName
+            lock.save()
+
+            logger.info("SMART_WALLET_DISCOVERY :: Lock acquired | Process: %s", processName)
+            return lock
+
+        except Exception as e:
+            logger.error("SMART_WALLET_DISCOVERY :: Failed to acquire lock: %s", str(e), exc_info=True)
+            raise
+
+    @staticmethod
+    def releaseLock(processName: str):
+        """
+        Release database lock after persistence is complete.
+        Clears the process name to indicate lock is available.
+
+        Args:
+            processName: Name of the process releasing the lock
+        """
+        try:
+            lock = Lock.objects.get(id=1)
+            lock.processname = None
+            lock.save()
+            logger.info("SMART_WALLET_DISCOVERY :: Lock released | Process: %s", processName)
+
+        except Exception as e:
+            logger.error("SMART_WALLET_DISCOVERY :: Failed to release lock: %s", str(e), exc_info=True)
+
+    @staticmethod
+    def persistWallet(evaluationResult: WalletEvaluvationResult) -> Optional[Wallet]:
+        """
+        Persist wallet with PnL calculated as a whole.
+
+        Flow:
+        1. Check if wallet exists in database
+        2. If exists and active → Update categories (merge)
+        3. If exists and inactive → Reactivate and update categories
+        4. If not exists → Persist new wallet with full hierarchy
+
+        Args:
+            evaluationResult: Result from wallet evaluation containing candidate and metrics
+
+        Returns:
+            Single Wallet instance if successful, None otherwise
+        """
         if not evaluationResult.passed:
-            logger.info("SMART_WALLET_DISCOVERY :: Attempted to persist failed wallet: %s",
-                       evaluationResult.walletAddress[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: Attempted to persist failed wallet: %s",evaluationResult.walletAddress[:10])
             return None
 
         try:
+            # Get categories as comma-separated string
             categories = WalletPersistenceService.getCategoriesFromCandidate(evaluationResult)
-            existingWalletsMap = WalletPersistenceService.getExistingCategoriesForWallet(evaluationResult.walletAddress)
-            wallets = WalletPersistenceService.processCategories(evaluationResult,categories,existingWalletsMap)
-            logger.info("SMART_WALLET_DISCOVERY :: Complete | Wallets processed: %d | Categories: %s",len(wallets) if wallets else 0, categories)
-            return wallets if wallets else None
+
+            # Check if wallet already exists
+            existingWallet = WalletPersistenceService.getExistingWallet(evaluationResult.walletAddress)
+
+            # Handle existing vs new wallet
+            if existingWallet:
+                wallet = WalletPersistenceService.handleExistingWallet(existingWallet,evaluationResult.walletAddress,categories)
+            else:
+                wallet = WalletPersistenceService.persistNewWallet(evaluationResult, categories)
+
+            if wallet:
+                logger.info("SMART_WALLET_DISCOVERY :: Complete | Wallet: %s | Categories: %s",wallet.proxywallet[:10], wallet.category or "None")
+
+            return wallet
 
         except Exception as e:
             logger.info("SMART_WALLET_DISCOVERY :: Failed | Wallet: %s | Error: %s",evaluationResult.walletAddress[:10], str(e), exc_info=True)
             return None
 
     @staticmethod
-    def getCategoriesFromCandidate(evaluationResult: WalletEvaluvationResult) -> List[Optional[str]]:
-        """Extract categories from candidate. Returns [None] if no categories found."""
+    def getCategoriesFromCandidate(evaluationResult: WalletEvaluvationResult) -> Optional[str]:
+        """
+        Extract categories from candidate and return as comma-separated string.
+        Categories are sorted alphabetically and deduplicated.
+
+        Args:
+            evaluationResult: Wallet evaluation result containing candidate data
+
+        Returns:
+            Comma-separated string of categories (e.g., 'Crypto,Politics,Sports')
+            None if no categories found
+        """
         candidate = evaluationResult.candidate
         categories = candidate.categories if candidate and candidate.categories else []
 
         if not categories:
             logger.info("SMART_WALLET_DISCOVERY :: No categories found for wallet: %s",evaluationResult.walletAddress[:10])
-            return [None]
+            return None
 
-        return categories
+        # Remove duplicates, sort alphabetically, and join
+        uniqueCategories = sorted(set(cat for cat in categories if cat))
 
-    @staticmethod
-    def processCategories(evaluationResult: WalletEvaluvationResult,categories: List[Optional[str]],existingWalletsMap: Dict[Optional[str], Wallet]) -> List[Wallet]:
-        """Process each category - either reactivate existing or persist new wallet."""
-        wallets = []
+        if not uniqueCategories:
+            return None
 
-        for category in categories:
-            wallet = WalletPersistenceService.processSingleCategory(evaluationResult,category,existingWalletsMap)
+        return ','.join(uniqueCategories)
 
-            if wallet:
-                wallets.append(wallet)
-
-        return wallets
 
     @staticmethod
-    def processSingleCategory(evaluationResult: WalletEvaluvationResult,category: Optional[str],existingWalletsMap: Dict[Optional[str], Wallet]) -> Optional[Wallet]:
-        """Process single category - check existing or persist new."""
-        existingWallet = existingWalletsMap.get(category)
+    def handleExistingWallet(existingWallet: Wallet, walletAddress: str, newCategories: Optional[str]) -> Wallet:
+        """
+        Update existing wallet with merged categories and reactivate if inactive.
+        """
+        mergedCategories = WalletPersistenceService.mergeCategories(existingWallet.category, newCategories)
 
-        if existingWallet:
-            return WalletPersistenceService.handleExistingWallet(existingWallet,evaluationResult.walletAddress,category)
-        return WalletPersistenceService.persistNewWallet(evaluationResult, category)
+        wasInactive = existingWallet.isactive == 0
+        categoriesChanged = mergedCategories != existingWallet.category
 
-    @staticmethod
-    def handleExistingWallet(existingWallet: Wallet,walletAddress: str,category: Optional[str]) -> Wallet:
-        """Handle existing wallet - reactivate if inactive, otherwise return as-is."""
-        if existingWallet.isactive == 0:
+        if wasInactive:
             existingWallet.isactive = 1
+            logger.info("SMART_WALLET_DISCOVERY :: Reactivated | Address: %s", walletAddress[:10])
+
+        if categoriesChanged:
+            existingWallet.category = mergedCategories
+            logger.info("SMART_WALLET_DISCOVERY :: Categories merged | Address: %s | %s → %s",
+                       walletAddress[:10], existingWallet.category or "None", mergedCategories or "None")
+
+        if wasInactive or categoriesChanged:
             existingWallet.save()
-            logger.info("SMART_WALLET_DISCOVERY :: Wallet reactivated | Address: %s | Category: %s",
-                       walletAddress[:10], category or "None")
-        else:
-            logger.info("SMART_WALLET_DISCOVERY :: Wallet exists and active | Address: %s | Category: %s",
-                       walletAddress[:10], category or "None")
 
         return existingWallet
 
     @staticmethod
-    def persistNewWallet(evaluationResult: WalletEvaluvationResult,category: Optional[str]) -> Optional[Wallet]:
-        """Persist new wallet for category with full hierarchy."""
-        with transaction.atomic():
-            wallet = WalletPersistenceService.persistWalletForCategory(evaluationResult,category)
+    def mergeCategories(existing: Optional[str], new: Optional[str]) -> Optional[str]:
+        """
+        Merge and deduplicate categories, returning sorted comma-separated string.
+        """
+        categories = set()
 
-            if wallet:
-                logger.info("SMART_WALLET_DISCOVERY :: Wallet persisted | Category: %s | Address: %s",category or "None", wallet.proxywallet[:10])
-            return wallet
+        if existing:
+            categories.update(cat.strip() for cat in existing.split(',') if cat.strip())
+        if new:
+            categories.update(cat.strip() for cat in new.split(',') if cat.strip())
+
+        return ','.join(sorted(categories)) if categories else None
 
     @staticmethod
-    def persistWalletForCategory(evaluationResult: WalletEvaluvationResult,category: Optional[str]) -> Optional[Wallet]:
+    def persistNewWallet(evaluationResult: WalletEvaluvationResult, categories: Optional[str]) -> Optional[Wallet]:
         """
-        Persist wallet and complete hierarchy for a specific category.
+        Persist new wallet with full hierarchy using database lock.
+        """
+        with transaction.atomic():
+            WalletPersistenceService.acquireLock(SMART_WALLET_DISCOVERY)
 
-        Pipeline:
-        1. Create/update wallet record
-        2. Persist events
-        3. Persist markets
-        4. Persist positions
-        5. Persist trades
-        6. Create batch records
+            try:
+                wallet = WalletPersistenceService.persistWalletHierarchy(evaluationResult, categories)
+
+                if wallet:
+                    logger.info("SMART_WALLET_DISCOVERY :: Persisted new wallet | Address: %s | Categories: %s",wallet.proxywallet[:10], categories or "None")
+                return wallet
+
+            finally:
+                WalletPersistenceService.releaseLock(SMART_WALLET_DISCOVERY)
+
+    @staticmethod
+    def persistWalletHierarchy(evaluationResult: WalletEvaluvationResult, categories: Optional[str]) -> Optional[Wallet]:
+        """
+        Persist wallet and complete hierarchy (events → markets → positions → trades).
+
+        Args:
+            evaluationResult: Wallet evaluation result with candidate and event hierarchy
+            categories: Comma-separated categories
+
+        Returns:
+            Persisted Wallet instance or None if failed
         """
         try:
             candidate = evaluationResult.candidate
@@ -130,83 +230,64 @@ class WalletPersistenceService:
                 logger.info("SMART_WALLET_DISCOVERY :: No candidate data")
                 return None
 
-            # Step 1: Create/update wallet
-            wallet = WalletPersistenceService.createWalletRecord(candidate, category)
+            # Create wallet record
+            wallet = WalletPersistenceService.createWalletRecord(candidate, categories)
             if not wallet:
                 return None
 
             eventHierarchy = evaluationResult.eventHierarchy
 
-            # Step 2: Persist events and get lookup
+            # Persist hierarchy: Events → Markets → Positions → Trades → Batches
             eventLookup = WalletPersistenceService.persistEvents(eventHierarchy)
+            marketLookup = WalletPersistenceService.persistMarkets(eventHierarchy, eventLookup)
+            WalletPersistenceService.persistPositions(wallet, eventHierarchy, marketLookup)
+            WalletPersistenceService.persistTrades(wallet, eventHierarchy, marketLookup)
+            WalletPersistenceService.createBatchRecords(wallet, eventHierarchy, marketLookup)
 
-            # Step 3: Persist markets and get lookup
-            marketLookup = WalletPersistenceService.persistMarkets(eventHierarchy,eventLookup)
-
-            # Step 4: Persist positions
-            WalletPersistenceService.persistPositions(wallet,eventHierarchy,marketLookup)
-
-            # Step 5: Persist trades
-            WalletPersistenceService.persistTrades(wallet,eventHierarchy,marketLookup)
-
-            # Step 6: Create batch records
-            WalletPersistenceService.createBatchRecords(wallet,eventHierarchy,marketLookup)
-
-            # Mark wallet as OLD (processed)
+            # Mark wallet as processed
             wallet.wallettype = WalletType.OLD
             wallet.save()
 
             return wallet
 
         except Exception as e:
-            logger.info("SMART_WALLET_DISCOVERY :: Category persistence failed | Category: %s | Error: %s",category, str(e), exc_info=True)
+            logger.error("SMART_WALLET_DISCOVERY :: Persistence failed | Error: %s", str(e), exc_info=True)
             return None
 
     @staticmethod
-    def getExistingCategoriesForWallet(walletAddress: str) -> Dict[Optional[str], Wallet]:
-        """
-        Fetch all wallet records for address and return as category map.
-        Single query instead of N queries.
-        """
+    def getExistingWallet(walletAddress: str) -> Optional[Wallet]:
         try:
-            existingWallets = Wallet.objects.filter(proxywallet=walletAddress).all()
-            return {wallet.category: wallet for wallet in existingWallets}
+            return Wallet.objects.filter(proxywallet=walletAddress).first()
         except Exception as e:
-            logger.info("SMART_WALLET_DISCOVERY :: Error fetching wallets: %s", str(e))
-            return {}
+            logger.info("SMART_WALLET_DISCOVERY :: Error fetching wallet: %s", str(e))
+            return None
 
     @staticmethod
-    def createWalletRecord(candidate, category: Optional[str]) -> Optional[Wallet]:
+    def createWalletRecord(candidate, categories: Optional[str]) -> Optional[Wallet]:
         """
-        Create or get wallet record for specific category.
-        Uses proxywallet + category as unique identifier.
+        Create new wallet record with comma-separated categories.
         """
         try:
-            # For multi-category support, we need unique records per category
-            # Use get_or_create with both proxywallet and category
-            wallet, created = Wallet.objects.get_or_create(
+            wallet = Wallet.objects.create(
                 proxywallet=candidate.proxyWallet,
-                category=category,
-                defaults={
-                    'username': candidate.username or f"User_{candidate.proxyWallet[:8]}",
-                    'xusername': getattr(candidate, 'xUsername', None),
-                    'verifiedbadge': getattr(candidate, 'verifiedBadge', False),
-                    'profileimage': getattr(candidate, 'profileImage', None),
-                    'platform': 'polymarket',
-                    'wallettype': WalletType.NEW,
-                    'isactive': 1,
-                    'firstseenat': timezone.now()
-                }
+                category=categories,
+                username=candidate.username or f"User_{candidate.proxyWallet[:8]}",
+                xusername=getattr(candidate, 'xUsername', None),
+                verifiedbadge=getattr(candidate, 'verifiedBadge', False),
+                profileimage=getattr(candidate, 'profileImage', None),
+                platform='polymarket',
+                wallettype=WalletType.NEW,
+                isactive=1,
+                firstseenat=timezone.now()
             )
 
-            action = "Created" if created else "Found"
-            logger.info("SMART_WALLET_DISCOVERY :: %s wallet | Category: %s | Address: %s",
-                       action, category or "None", wallet.proxywallet[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: Created wallet | Address: %s | Categories: %s",
+                       wallet.proxywallet[:10], categories or "None")
 
             return wallet
 
         except Exception as e:
-            logger.info("SMART_WALLET_DISCOVERY :: Failed to create wallet | Error: %s", str(e))
+            logger.error("SMART_WALLET_DISCOVERY :: Failed to create wallet | Error: %s", str(e))
             return None
 
     @staticmethod

@@ -123,4 +123,27 @@ class Wallet(models.Model):
         if len(self.proxywallet) > 10:
             return f"{self.proxywallet[:6]}...{self.proxywallet[-4:]}"
         return self.proxywallet
+
+
+class Lock(models.Model):
+    """
+    Lock table for managing concurrent wallet persistence operations.
+    Ensures thread-safe writes when processing wallets in parallel.
+    """
+
+    id = models.IntegerField(primary_key=True, default=1)
+    processname = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Name of the process holding the lock"
+    )
+
+    class Meta:
+        db_table = 'lock'
+        verbose_name = 'Lock'
+        verbose_name_plural = 'Locks'
+
+    def __str__(self):
+        return f"Lock (Process: {self.processname or 'None'})"
     

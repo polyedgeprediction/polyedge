@@ -4,13 +4,15 @@ Main entry point for discovering and processing smart money wallets from leaderb
 
 Flow:
 1. Fetch wallet candidates from leaderboard API
-2. Evaluate each candidate through filtering pipeline
-3. Persist wallets that pass filtering with complete hierarchy
+2. Evaluate each candidate through filtering pipeline (in parallel)
+3. Persist wallets that pass filtering with complete hierarchy (with locking)
 4. Track and report metrics
 """
 import logging
 import time
 from typing import List
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from wallets.smartwalletdiscovery.WalletEvaluvationService import WalletEvaluvationService
 from wallets.services.WalletPersistenceService import WalletPersistenceService
@@ -19,6 +21,7 @@ from wallets.pojos.WalletDiscoveryResult import WalletDiscoveryResult
 from wallets.pojos.WalletDiscoveryMetrics import WalletDiscoveryMetrics
 from wallets.smartwalletdiscovery.WalletCandidateFetcher import WalletCandidateFetcher
 from wallets.pojos.WalletEvaluvationResult import WalletEvaluvationResult
+from wallets.Constants import PARALLEL_WALLET_WORKERS
 
 logger = logging.getLogger(__name__)
 
@@ -84,38 +87,63 @@ class SmartWalletDiscoveryService:
             return WalletDiscoveryResult.failure(str(e), executionTime)
 
     def processCandidates(self, candidates: List[WalletCandidate]) -> WalletDiscoveryMetrics:
-        logger.info("SMART_WALLET_DISCOVERY :: Processing %d candidates", len(candidates))
+        logger.info("SMART_WALLET_DISCOVERY :: Processing %d candidates in parallel with %d workers",len(candidates), PARALLEL_WALLET_WORKERS)
 
         metrics = WalletDiscoveryMetrics.create()
 
-        for candidate in candidates:
-            metrics.incrementProcessed()
+        # Process candidates in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=PARALLEL_WALLET_WORKERS) as executor:
+            # Submit all candidates for processing
+            future_to_candidate = {
+                executor.submit(self.processSingleCandidate, candidate, metrics): candidate
+                for candidate in candidates
+            }
 
-            try:
-                # Step 1: Evaluate wallet
-                evaluationResult = self.evaluvationService.evaluateWallet(candidate)
+            # Wait for all tasks to complete
+            for future in as_completed(future_to_candidate):
+                candidate = future_to_candidate[future]
+                try:
+                    future.result()  # This will raise any exception that occurred during processing
+                except Exception as e:
+                    logger.error("SMART_WALLET_DISCOVERY :: Unexpected error in parallel processing for wallet %s: %s",candidate.proxyWallet[:10], str(e), exc_info=True)
+                    metrics.recordProcessingError()
 
-                if evaluationResult.passed:
-                    metrics.recordPassed(evaluationResult.positionCount)
-
-                    logger.info("SMART_WALLET_DISCOVERY :: PASSED | Wallet: %s | Trades: %d | PNL: %.2f",candidate.proxyWallet[:10],evaluationResult.tradeCount,float(evaluationResult.combinedPnl))
-
-                    # Step 2: Persist wallet and hierarchy
-                    persistedWallets = self.persistenceService.persistWallet(evaluationResult)
-
-                    if persistedWallets:
-                        metrics.recordPersisted(len(persistedWallets))
-                        logger.info("SMART_WALLET_DISCOVERY :: PERSISTED | Wallet: %s | Categories: %d",candidate.proxyWallet[:10],len(persistedWallets))
-                    else:
-                        logger.info("SMART_WALLET_DISCOVERY :: Persistence failed | Wallet: %s",candidate.proxyWallet[:10])
-
-                else:
-                    metrics.recordRejected(evaluationResult.failReason or "Unknown")
-                    logger.info("SMART_WALLET_DISCOVERY :: REJECTED | Wallet: %s | Reason: %s",candidate.proxyWallet[:10],evaluationResult.failReason)
-
-            except Exception as e:
-                metrics.recordProcessingError()
-                logger.info("SMART_WALLET_DISCOVERY :: Error processing wallet %s: %s",candidate.proxyWallet[:10], str(e), exc_info=True)
-
-        logger.info("SMART_WALLET_DISCOVERY :: Batch complete | Processed: %d | Passed: %d | Persisted: %d",metrics.totalProcessed,metrics.passedEvaluation,metrics.successfullyPersisted)
+        logger.info("SMART_WALLET_DISCOVERY :: Batch complete | Processed: %d | Passed: %d | Persisted: %d",metrics.totalProcessed, metrics.passedEvaluation, metrics.successfullyPersisted)
         return metrics
+
+    def processSingleCandidate(self, candidate: WalletCandidate, metrics: WalletDiscoveryMetrics) -> None:
+        """
+        Process a single wallet candidate (evaluation + persistence).
+        This method is called by worker threads in parallel.
+
+        Args:
+            candidate: The wallet candidate to process
+            metrics: Shared metrics object (thread-safe)
+        """
+        metrics.incrementProcessed()
+
+        try:
+            # Step 1: Evaluate wallet
+            evaluationResult = self.evaluvationService.evaluateWallet(candidate)
+
+            if evaluationResult.passed:
+                metrics.recordPassed(evaluationResult.positionCount)
+
+                logger.info("SMART_WALLET_DISCOVERY :: PASSED | Wallet: %s | Trades: %d | PNL: %.2f",candidate.proxyWallet[:10], evaluationResult.tradeCount, float(evaluationResult.combinedPnl))
+
+                # Step 2: Persist wallet and hierarchy (with database lock)
+                persistedWallet = self.persistenceService.persistWallet(evaluationResult)
+
+                if persistedWallet:
+                    metrics.recordPersisted(1)
+                    logger.info("SMART_WALLET_DISCOVERY :: PERSISTED | Wallet: %s | Categories: %s",candidate.proxyWallet[:10], persistedWallet.category or "None")
+                else:
+                    logger.info("SMART_WALLET_DISCOVERY :: Persistence failed | Wallet: %s",candidate.proxyWallet[:10])
+
+            else:
+                metrics.recordRejected(evaluationResult.failReason or "Unknown")
+                logger.info("SMART_WALLET_DISCOVERY :: REJECTED | Wallet: %s | Reason: %s",candidate.proxyWallet[:10], evaluationResult.failReason)
+
+        except Exception as e:
+            metrics.recordProcessingError()
+            logger.error("SMART_WALLET_DISCOVERY :: Error processing wallet %s: %s",candidate.proxyWallet[:10], str(e), exc_info=True)
