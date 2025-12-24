@@ -77,6 +77,29 @@ class Wallet(models.Model):
         help_text="Wallet lifecycle status (new/old)"
     )
 
+    # PnL tracking
+    openpnl = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="PnL from open positions (unrealized)"
+    )
+
+    closedpnl = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="PnL from closed positions (realized)"
+    )
+
+    pnl = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        db_index=True,
+        help_text="Total PnL (open + closed)"
+    )
+
      # Timestamps
     firstseenat = models.DateTimeField(
         default=timezone.now,
@@ -123,4 +146,27 @@ class Wallet(models.Model):
         if len(self.proxywallet) > 10:
             return f"{self.proxywallet[:6]}...{self.proxywallet[-4:]}"
         return self.proxywallet
+
+
+class Lock(models.Model):
+    """
+    Lock table for managing concurrent wallet persistence operations.
+    Ensures thread-safe writes when processing wallets in parallel.
+    """
+
+    id = models.IntegerField(primary_key=True, default=1)
+    processname = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Name of the process holding the lock"
+    )
+
+    class Meta:
+        db_table = 'lock'
+        verbose_name = 'Lock'
+        verbose_name_plural = 'Locks'
+
+    def __str__(self):
+        return f"Lock (Process: {self.processname or 'None'})"
     

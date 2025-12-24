@@ -33,7 +33,7 @@ class ClosedPositionAPI:
         self.maxRetries = maxRetries
         self.retryDelay = retryDelay
 
-    def fetchClosedPositions(self, walletAddress: str) -> List[PolymarketPositionResponse]:
+    def fetchClosedPositions(self, walletAddress: str, candidateNumber: int=None) -> List[PolymarketPositionResponse]:
         allPositions = []
         offset = 0
         limit = 50
@@ -65,13 +65,9 @@ class ClosedPositionAPI:
             
             # Move to next page
             offset += limit
-            logger.info("CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s | Offset: %d", len(allPositions), walletAddress[:10], offset)
+            logger.info("CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s | Offset: %d - #%d", len(allPositions), walletAddress[:10], offset, candidateNumber)
         
-        logger.info(
-            "CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s",
-            len(allPositions),
-            walletAddress[:10]
-        )
+        logger.info("CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s - #%d",len(allPositions),walletAddress[:10], candidateNumber)
         
         return allPositions
 

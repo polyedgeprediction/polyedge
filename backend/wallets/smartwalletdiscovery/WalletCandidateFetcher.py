@@ -47,6 +47,7 @@ class WalletCandidateFetcher:
         """
         seenWallets = {}  # Dict[walletAddress, WalletCandidate] for category tracking
         limit = 50
+        walletCounter = 0  # Counter for numbering wallets
 
         # Use all available categories to maximize coverage
         categories = SMART_MONEY_CATEGORIES
@@ -83,8 +84,11 @@ class WalletCandidateFetcher:
                             seenWallets[walletAddress].categories.append(category)
                     else:
                         # New wallet - create candidate and add category
+                        walletCounter += 1
                         candidate = self._parseToCandidate(walletData, category)
+                        candidate.number = walletCounter
                         seenWallets[walletAddress] = candidate
+                        logger.info("SMART_WALLET_DISCOVERY :: Candidate #%d | Wallet: %s", walletCounter, walletAddress)
 
                 if foundLowPnl:
                     break
