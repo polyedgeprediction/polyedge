@@ -42,28 +42,48 @@ class WalletPersistenceService:
     def acquireLock(processName: str):
         """
         Acquire database lock for thread-safe persistence.
-        Uses select_for_update to ensure only one thread can persist at a time.
-        Creates lock record if it doesn't exist.
+
+        Behavior:
+        - Creates lock record if it doesn't exist
+        - Blocks (waits) if another process holds the lock
+        - Acquires lock once available
 
         Args:
             processName: Name of the process acquiring the lock
+
+        Returns:
+            Lock object with acquired lock
         """
         try:
-            # Get or create the lock record with id=1
-            lock, created = Lock.objects.get_or_create(id=1, defaults={'processname': None})
+            with transaction.atomic():
+                # Try to acquire lock with select_for_update (blocks until available)
+                try:
+                    logger.info("SMART_WALLET_DISCOVERY :: Attempting to acquire lock | Process: %s", processName)
 
-            # Acquire row-level lock using select_for_update
-            lock = Lock.objects.select_for_update().get(id=1)
+                    # This blocks if another transaction has the lock
+                    lock = Lock.objects.select_for_update().get(id=1)
 
-            # Update process name to indicate this process holds the lock
-            lock.processname = processName
-            lock.save()
+                except Lock.DoesNotExist:
+                    # Lock record doesn't exist, create it
+                    logger.info("SMART_WALLET_DISCOVERY :: Lock record not found, creating | Process: %s", processName)
+                    lock = Lock.objects.create(id=1, processname=None)
 
-            logger.info("SMART_WALLET_DISCOVERY :: Lock acquired | Process: %s", processName)
-            return lock
+                # At this point, we have the lock (select_for_update waited if needed)
+                previousHolder = lock.processname
+                lock.processname = processName
+                lock.save()
+
+                if previousHolder:
+                    logger.info("SMART_WALLET_DISCOVERY :: Lock acquired (was held by: %s) | New holder: %s",
+                               previousHolder, processName)
+                else:
+                    logger.info("SMART_WALLET_DISCOVERY :: Lock acquired | Process: %s", processName)
+
+                return lock
 
         except Exception as e:
-            logger.error("SMART_WALLET_DISCOVERY :: Failed to acquire lock: %s", str(e), exc_info=True)
+            logger.error("SMART_WALLET_DISCOVERY :: Failed to acquire lock | Process: %s | Error: %s",
+                        processName, str(e), exc_info=True)
             raise
 
     @staticmethod
@@ -82,7 +102,7 @@ class WalletPersistenceService:
             logger.info("SMART_WALLET_DISCOVERY :: Lock released | Process: %s", processName)
 
         except Exception as e:
-            logger.error("SMART_WALLET_DISCOVERY :: Failed to release lock: %s", str(e), exc_info=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Failed to release lock: %s", str(e), exc_info=True)
 
     @staticmethod
     def persistWallet(evaluationResult: WalletEvaluvationResult) -> Optional[Wallet]:
@@ -114,7 +134,14 @@ class WalletPersistenceService:
 
             # Handle existing vs new wallet
             if existingWallet:
-                wallet = WalletPersistenceService.handleExistingWallet(existingWallet,evaluationResult.walletAddress,categories)
+                wallet = WalletPersistenceService.handleExistingWallet(
+                    existingWallet,
+                    evaluationResult.walletAddress,
+                    categories,
+                    evaluationResult.openPnl,
+                    evaluationResult.closedPnl,
+                    evaluationResult.combinedPnl
+                )
             else:
                 wallet = WalletPersistenceService.persistNewWallet(evaluationResult, categories)
 
@@ -157,14 +184,18 @@ class WalletPersistenceService:
 
 
     @staticmethod
-    def handleExistingWallet(existingWallet: Wallet, walletAddress: str, newCategories: Optional[str]) -> Wallet:
+    def handleExistingWallet(existingWallet: Wallet, walletAddress: str, newCategories: Optional[str],
+                            openPnl: Decimal, closedPnl: Decimal, totalPnl: Decimal) -> Wallet:
         """
-        Update existing wallet with merged categories and reactivate if inactive.
+        Update existing wallet with merged categories, PnL values, and reactivate if inactive.
         """
         mergedCategories = WalletPersistenceService.mergeCategories(existingWallet.category, newCategories)
 
         wasInactive = existingWallet.isactive == 0
         categoriesChanged = mergedCategories != existingWallet.category
+        pnlChanged = (existingWallet.openpnl != openPnl or
+                     existingWallet.closedpnl != closedPnl or
+                     existingWallet.pnl != totalPnl)
 
         if wasInactive:
             existingWallet.isactive = 1
@@ -175,7 +206,14 @@ class WalletPersistenceService:
             logger.info("SMART_WALLET_DISCOVERY :: Categories merged | Address: %s | %s → %s",
                        walletAddress[:10], existingWallet.category or "None", mergedCategories or "None")
 
-        if wasInactive or categoriesChanged:
+        if pnlChanged:
+            existingWallet.openpnl = openPnl
+            existingWallet.closedpnl = closedPnl
+            existingWallet.pnl = totalPnl
+            logger.info("SMART_WALLET_DISCOVERY :: PnL updated | Address: %s | Total: %.2f (Open: %.2f | Closed: %.2f)",
+                       walletAddress[:10], float(totalPnl), float(openPnl), float(closedPnl))
+
+        if wasInactive or categoriesChanged or pnlChanged:
             existingWallet.save()
 
         return existingWallet
@@ -230,8 +268,14 @@ class WalletPersistenceService:
                 logger.info("SMART_WALLET_DISCOVERY :: No candidate data")
                 return None
 
-            # Create wallet record
-            wallet = WalletPersistenceService.createWalletRecord(candidate, categories)
+            # Create wallet record with PnL values
+            wallet = WalletPersistenceService.createWalletRecord(
+                candidate,
+                categories,
+                evaluationResult.openPnl,
+                evaluationResult.closedPnl,
+                evaluationResult.combinedPnl
+            )
             if not wallet:
                 return None
 
@@ -263,9 +307,9 @@ class WalletPersistenceService:
             return None
 
     @staticmethod
-    def createWalletRecord(candidate, categories: Optional[str]) -> Optional[Wallet]:
+    def createWalletRecord(candidate, categories: Optional[str], openPnl: Decimal, closedPnl: Decimal, totalPnl: Decimal) -> Optional[Wallet]:
         """
-        Create new wallet record with comma-separated categories.
+        Create new wallet record with comma-separated categories and PnL values.
         """
         try:
             wallet = Wallet.objects.create(
@@ -278,11 +322,14 @@ class WalletPersistenceService:
                 platform='polymarket',
                 wallettype=WalletType.NEW,
                 isactive=1,
+                openpnl=openPnl,
+                closedpnl=closedPnl,
+                pnl=totalPnl,
                 firstseenat=timezone.now()
             )
 
-            logger.info("SMART_WALLET_DISCOVERY :: Created wallet | Address: %s | Categories: %s",
-                       wallet.proxywallet[:10], categories or "None")
+            logger.info("SMART_WALLET_DISCOVERY :: Created wallet | Address: %s | Categories: %s | PnL: %.2f (Open: %.2f | Closed: %.2f)",
+                       wallet.proxywallet[:10], categories or "None", float(totalPnl), float(openPnl), float(closedPnl))
 
             return wallet
 
@@ -454,6 +501,7 @@ class WalletPersistenceService:
                 calculatedamountout=position.calculatedAmountTakenOut or Decimal('0'),
                 calculatedcurrentvalue=position.calculatedCurrentValue or Decimal('0'),
                 enddate=endDate,
+                timestamp=position.timestamp,
                 negativerisk=position.negativeRisk
             )
 

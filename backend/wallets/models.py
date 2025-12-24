@@ -77,6 +77,29 @@ class Wallet(models.Model):
         help_text="Wallet lifecycle status (new/old)"
     )
 
+    # PnL tracking
+    openpnl = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="PnL from open positions (unrealized)"
+    )
+
+    closedpnl = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="PnL from closed positions (realized)"
+    )
+
+    pnl = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        db_index=True,
+        help_text="Total PnL (open + closed)"
+    )
+
      # Timestamps
     firstseenat = models.DateTimeField(
         default=timezone.now,

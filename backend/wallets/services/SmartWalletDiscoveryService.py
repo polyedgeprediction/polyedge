@@ -105,7 +105,7 @@ class SmartWalletDiscoveryService:
                 try:
                     future.result()  # This will raise any exception that occurred during processing
                 except Exception as e:
-                    logger.error("SMART_WALLET_DISCOVERY :: Unexpected error in parallel processing for wallet %s: %s",candidate.proxyWallet[:10], str(e), exc_info=True)
+                    logger.info("SMART_WALLET_DISCOVERY :: Unexpected error in parallel processing for wallet %s: %s",candidate.proxyWallet[:10], str(e), exc_info=True)
                     metrics.recordProcessingError()
 
         logger.info("SMART_WALLET_DISCOVERY :: Batch complete | Processed: %d | Passed: %d | Persisted: %d",metrics.totalProcessed, metrics.passedEvaluation, metrics.successfullyPersisted)
@@ -129,21 +129,21 @@ class SmartWalletDiscoveryService:
             if evaluationResult.passed:
                 metrics.recordPassed(evaluationResult.positionCount)
 
-                logger.info("SMART_WALLET_DISCOVERY :: PASSED | Wallet: %s | Trades: %d | PNL: %.2f",candidate.proxyWallet[:10], evaluationResult.tradeCount, float(evaluationResult.combinedPnl))
+                logger.info("SMART_WALLET_DISCOVERY :: PASSED | #%d | Wallet: %s | Trades: %d | PNL: %.2f",candidate.number, candidate.proxyWallet[:10], evaluationResult.tradeCount, float(evaluationResult.combinedPnl))
 
                 # Step 2: Persist wallet and hierarchy (with database lock)
                 persistedWallet = self.persistenceService.persistWallet(evaluationResult)
 
                 if persistedWallet:
                     metrics.recordPersisted(1)
-                    logger.info("SMART_WALLET_DISCOVERY :: PERSISTED | Wallet: %s | Categories: %s",candidate.proxyWallet[:10], persistedWallet.category or "None")
+                    logger.info("SMART_WALLET_DISCOVERY :: PERSISTED | #%d | Wallet: %s | Categories: %s",candidate.number, candidate.proxyWallet[:10], persistedWallet.category or "None")
                 else:
-                    logger.info("SMART_WALLET_DISCOVERY :: Persistence failed | Wallet: %s",candidate.proxyWallet[:10])
+                    logger.info("SMART_WALLET_DISCOVERY :: Persistence failed | #%d | Wallet: %s",candidate.number, candidate.proxyWallet[:10])
 
             else:
                 metrics.recordRejected(evaluationResult.failReason or "Unknown")
-                logger.info("SMART_WALLET_DISCOVERY :: REJECTED | Wallet: %s | Reason: %s",candidate.proxyWallet[:10], evaluationResult.failReason)
+                logger.info("SMART_WALLET_DISCOVERY :: REJECTED | #%d | Wallet: %s | Reason: %s",candidate.number, candidate.proxyWallet[:10], evaluationResult.failReason)
 
         except Exception as e:
             metrics.recordProcessingError()
-            logger.error("SMART_WALLET_DISCOVERY :: Error processing wallet %s: %s",candidate.proxyWallet[:10], str(e), exc_info=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Error processing wallet | #%d | %s: %s",candidate.number, candidate.proxyWallet[:10], str(e), exc_info=True)

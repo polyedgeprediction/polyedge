@@ -19,3 +19,4 @@ class WalletCandidate:
     verifiedBadge: bool = False
     rank: Optional[int] = None
     categories: List[str] = field(default_factory=list)
+    number: Optional[int] = None  # Sequential number for tracking in logs

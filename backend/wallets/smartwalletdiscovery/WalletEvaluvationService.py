@@ -58,31 +58,31 @@ class WalletEvaluvationService:
 
     def evaluateWallet(self, candidate: WalletCandidate) -> WalletEvaluvationResult:
         walletAddress = candidate.proxyWallet
-        logger.info("SMART_WALLET_DISCOVERY :: Starting evaluation | Wallet: %s", walletAddress[:10])
+        logger.info("SMART_WALLET_DISCOVERY :: Starting evaluation | Wallet: %s - #%d", walletAddress[:10], candidate.number)
 
         try:
             # Step 1: Fetch all positions
-            openPositions, closedPositions = self.fetchPositions(walletAddress)
-            logger.info("SMART_WALLET_DISCOVERY :: Positions fetched | Open: %d | Closed: %d | Wallet: %s",len(openPositions), len(closedPositions), walletAddress[:10])
+            openPositions, closedPositions = self.fetchPositions(walletAddress, candidate.number)
+            logger.info("SMART_WALLET_DISCOVERY :: Positions fetched | Open: %d | Closed: %d | Wallet: %s  - #%d",len(openPositions), len(closedPositions), walletAddress[:10], candidate.number)
 
             if not openPositions and not closedPositions:
                 return WalletEvaluvationResult.create(walletAddress=walletAddress,passed=False,failReason="No positions found",candidate=candidate)
 
             # Step 2: Build Event → Market → Position hierarchy
-            eventHierarchy = self.buildEventHierarchy(openPositions, closedPositions)
-            logger.info("SMART_WALLET_DISCOVERY :: Hierarchy built | Events: %d | Markets: %d | Wallet: %s",len(eventHierarchy), self._countMarkets(eventHierarchy), walletAddress[:10])
+            eventHierarchy = self.buildEventHierarchy(openPositions, closedPositions, candidate.number)
+            logger.info("SMART_WALLET_DISCOVERY :: Hierarchy built | Events: %d | Markets: %d | Wallet: %s - #%d",len(eventHierarchy), self._countMarkets(eventHierarchy), walletAddress[:10], candidate.number)
 
             # Step 3: Process each market individually and calculate totals
             cutoffTimestamp = self.getCutoffTimestamp()
-            totalPnl, tradeCount, positionCount = self.processMarketsForPnl(walletAddress, eventHierarchy, cutoffTimestamp)
-            logger.info("SMART_WALLET_DISCOVERY :: Metrics calculated | Total PNL: %.2f | Trades: %d | Positions: %d | Wallet: %s",float(totalPnl), tradeCount, positionCount, walletAddress[:10])
+            totalPnl, openPnl, closedPnl, tradeCount, positionCount = self.processMarketsForPnl(walletAddress, eventHierarchy, cutoffTimestamp, candidate.number)
+            logger.info("SMART_WALLET_DISCOVERY :: Metrics calculated | Total PNL: %.2f | Open: %.2f | Closed: %.2f | Trades: %d | Positions: %d | Wallet: %s - #%d",float(totalPnl), float(openPnl), float(closedPnl), tradeCount, positionCount, walletAddress[:10], candidate.number)
 
             # Step 6: Apply filters
             if not self.passesActivityFilter(tradeCount, positionCount):
                 return WalletEvaluvationResult.create(
                     walletAddress=walletAddress,
                     passed=False,
-                    failReason=f"Insufficient activity | Trades: {tradeCount} | Positions: {positionCount} | Wallet: {walletAddress[:10]}",
+                    failReason=f"Insufficient activity | Trades: {tradeCount} | Positions: {positionCount} | Wallet: {walletAddress[:10]} - #%d",
                     candidate=candidate
                 )
 
@@ -90,7 +90,7 @@ class WalletEvaluvationService:
                 return WalletEvaluvationResult.create(
                     walletAddress=walletAddress,
                     passed=False,
-                    failReason=f"Insufficient PNL | Total: {totalPnl} | Wallet: {walletAddress[:10]}",
+                    failReason=f"Insufficient PNL | Total: {totalPnl} | Wallet: {walletAddress[:10]} - #%d",
                     candidate=candidate
                 )
 
@@ -101,31 +101,34 @@ class WalletEvaluvationService:
                 candidate=candidate
             )
             result.combinedPnl = totalPnl
+            result.openPnl = openPnl
+            result.closedPnl = closedPnl
             result.tradeCount = tradeCount
             result.positionCount = positionCount
             # Store hierarchy for persistence
             result.eventHierarchy = eventHierarchy
 
-            logger.info("SMART_WALLET_DISCOVERY :: Wallet PASSED | PNL: %.2f | Trades: %d | Positions: %d | Wallet: %s",float(totalPnl), tradeCount, positionCount, walletAddress[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: Wallet PASSED | Total PNL: %.2f | Open: %.2f | Closed: %.2f | Trades: %d | Positions: %d | Wallet: %s - #%d",
+                       float(totalPnl), float(openPnl), float(closedPnl), tradeCount, positionCount, walletAddress[:10], candidate.number)
 
             return result
 
         except Exception as e:
-            logger.info("SMART_WALLET_DISCOVERY :: Evaluation failed | Wallet: %s | Error: %s",walletAddress[:10], str(e), exc_info=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Evaluation failed | Wallet: %s | Error: %s - #%d",walletAddress[:10], str(e), candidate.number, exc_info=True)
             return WalletEvaluvationResult.create(
                 walletAddress=walletAddress,
                 passed=False,
-                failReason=f"Evaluation error: {str(e)[:100]}",
+                failReason=f"Evaluation error: {str(e)[:100]} - #%d",
                 candidate=candidate
             )
 
-    def fetchPositions(self, walletAddress: str) -> Tuple[List[PolymarketPositionResponse], List[PolymarketPositionResponse]]:
+    def fetchPositions(self, walletAddress: str, candidateNumber: int) -> Tuple[List[PolymarketPositionResponse], List[PolymarketPositionResponse]]:
         """Fetch open and closed positions for wallet."""
-        openPositions = self.openPositionAPI.fetchOpenPositions(walletAddress)
-        closedPositions = self.closedPositionAPI.fetchClosedPositions(walletAddress)
+        openPositions = self.openPositionAPI.fetchOpenPositions(walletAddress, candidateNumber)
+        closedPositions = self.closedPositionAPI.fetchClosedPositions(walletAddress, candidateNumber)
         return openPositions, closedPositions
 
-    def buildEventHierarchy(self,openPositions: List[PolymarketPositionResponse],closedPositions: List[PolymarketPositionResponse]) -> Dict[str, Event]:
+    def buildEventHierarchy(self,openPositions: List[PolymarketPositionResponse],closedPositions: List[PolymarketPositionResponse], candidateNumber: int) -> Dict[str, Event]:
         """
         Build Event → Market → Position hierarchy from API responses.
         Groups positions by event slug and market condition ID.
@@ -161,7 +164,7 @@ class WalletEvaluvationService:
                         # Parse the date string (handles both formats)
                         endDate = date_parser.parse(endDate)
                     except Exception as e:
-                        logger.warning("WALLET_EVAL :: Failed to parse endDate: %s | Error: %s", endDate, str(e))
+                        logger.info("SMART_WALLET_DISCOVERY :: Failed to parse endDate: %s | Error: %s - #%d", endDate, str(e), candidateNumber)
                         endDate = None
                 else:
                     endDate = None
@@ -204,15 +207,17 @@ class WalletEvaluvationService:
             timestamp=apiPosition.timestamp
         )
 
-    def processMarketsForPnl(self, walletAddress: str, eventHierarchy: Dict[str, Event], cutoffTimestamp: int) -> Tuple[Decimal, int, int]:
+    def processMarketsForPnl(self, walletAddress: str, eventHierarchy: Dict[str, Event], cutoffTimestamp: int, candidateNumber: int) -> Tuple[Decimal, Decimal, Decimal, int, int]:
         """
         Process each market individually to calculate PNL and track metrics.
 
-        Returns running totals for: (totalPnl, tradeCount, positionCount)
-        - For markets with open positions: fetch trades, calculate PNL, add to totals if in range
-        - For markets with closed positions only: use API PNL, add to totals if in range
+        Returns running totals for: (totalPnl, openPnl, closedPnl, tradeCount, positionCount)
+        - For markets with open positions: fetch trades, calculate PNL, add to openPnl
+        - For markets with closed positions only: use API PNL, add to closedPnl
         """
         totalPnl = Decimal('0')
+        openPnl = Decimal('0')
+        closedPnl = Decimal('0')
         tradeCount = 0
         positionCount = 0
 
@@ -222,35 +227,37 @@ class WalletEvaluvationService:
 
                 if market.hasOpenPositions():
                     # Market has open positions - fetch trades and calculate PNL
-                    marketPnl, marketTradeCount = self.processMarketWithOpenPositions(walletAddress, market, conditionId, cutoffTimestamp)
-                    logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f",market.question, float(totalPnl or 0))
+                    marketPnl, marketTradeCount = self.processMarketWithOpenPositions(walletAddress, market, conditionId, cutoffTimestamp, candidateNumber)
+                    logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f | Open PNL: %.2f | PNL to be added: %.2f - #%d",market.question, float(totalPnl or 0), float(openPnl or 0), float(marketPnl or 0), candidateNumber)
                     if marketPnl is not None:
+                        openPnl += marketPnl
                         totalPnl += marketPnl
                         tradeCount += marketTradeCount
-                    logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f",market.question, float(totalPnl or 0))
+                    logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f | Open PNL: %.2f | PNL added: %.2f - #%d",market.question, float(totalPnl or 0), float(openPnl or 0), float(marketPnl or 0), candidateNumber)
                 else:
                     # Market has only closed positions - use API PNL
-                    marketPnl = self.processMarketWithClosedPositions(market, cutoffTimestamp)
-                    logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f",market.question, float(totalPnl or 0))
+                    marketPnl = self.processMarketWithClosedPositions(market, cutoffTimestamp, candidateNumber)
+                    logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f | Closed PNL: %.2f | PNL to be added: %.2f - #%d",market.question, float(totalPnl or 0), float(closedPnl or 0), float(marketPnl or 0), candidateNumber)
                     if marketPnl is not None:
+                        closedPnl += marketPnl
                         totalPnl += marketPnl
                         tradeCount += market.closedPositionCount  # Estimate 1 trade per closed position
-                    logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f",market.question, float(totalPnl or 0))
+                    logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f | Closed PNL: %.2f | PNL added: %.2f - #%d",market.question, float(totalPnl or 0), float(closedPnl or 0), float(marketPnl or 0), candidateNumber)
 
-        return totalPnl, tradeCount, positionCount
+        return totalPnl, openPnl, closedPnl, tradeCount, positionCount
 
-    def processMarketWithOpenPositions(self, walletAddress: str, market: Market, conditionId: str, cutoffTimestamp: int) -> Tuple[Optional[Decimal], int]:
+    def processMarketWithOpenPositions(self, walletAddress: str, market: Market, conditionId: str, cutoffTimestamp: int, candidateNumber: int) -> Tuple[Optional[Decimal], int]:
         try:
             dailyTradesMap, latestTimestamp = self.fetchTradesForMarket(walletAddress, conditionId)
 
             if not dailyTradesMap:
-                logger.info("SMART_WALLET_DISCOVERY :: No trades for market with open positions: %s | Wallet: %s", market.question, walletAddress[:10])
+                logger.info("SMART_WALLET_DISCOVERY :: No trades for market with open positions: %s | Wallet: %s - #%d", market.question, walletAddress[:10], candidateNumber)
                 return None, 0
 
-            logger.info("SMART_WALLET_DISCOVERY :: Trades fetched for market with open positions, market: %s | trades: %d | Wallet: %s", market.question, len(dailyTradesMap), walletAddress[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: Trades fetched for market with open positions, market: %s | trades: %d | Wallet: %s - #%d", market.question, len(dailyTradesMap), walletAddress[:10], candidateNumber)
 
             # Calculate PNL from trades
-            self.calculateMarketPnlFromTrades(market, dailyTradesMap)
+            self.calculateMarketPnlFromTrades(market, dailyTradesMap, candidateNumber)
 
             if latestTimestamp:
                 market.markBatchTimestamp(latestTimestamp)
@@ -267,18 +274,18 @@ class WalletEvaluvationService:
                     if int(datetime.combine(tradeDate, datetime.min.time()).timestamp()) >= cutoffTimestamp
                 )
 
-                logger.info("SMART_WALLET_DISCOVERY :: Market with open positions IN RANGE | Market: %s | PNL: %.2f | Trades: %d | Wallet: %s",market.question, float(market.calculatedPnl or 0), tradesInRange, walletAddress[:10])
-                logger.info("SMART_WALLET_DISCOVERY :: Market : %s | open-inrange: %s | closed-inrange : %s | Wallet: %s" ,market.question, hasTradesInRange, hasClosedInRange, walletAddress[:10])
+                logger.info("SMART_WALLET_DISCOVERY :: Market with open positions IN RANGE | Market: %s | PNL: %.2f | Trades: %d | Wallet: %s - #%d",market.question, float(market.calculatedPnl or 0), tradesInRange, walletAddress[:10], candidateNumber)
+                logger.info("SMART_WALLET_DISCOVERY :: Market : %s | open-inrange: %s | closed-inrange : %s | Wallet: %s - #%d" ,market.question, hasTradesInRange, hasClosedInRange, walletAddress[:10], candidateNumber)
                 return market.calculatedPnl, tradesInRange
             else:
-                logger.info("SMART_WALLET_DISCOVERY :: Market with open positions NOT in range: %s | Wallet: %s", market.question, walletAddress[:10])
+                logger.info("SMART_WALLET_DISCOVERY :: Market with open positions NOT in range: %s | Wallet: %s - #%d", market.question, walletAddress[:10], candidateNumber)
                 return None, 0
 
         except Exception as e:
-            logger.error("SMART_WALLET_DISCOVERY :: Error processing market %s: %s | Wallet: %s", market.question, str(e), walletAddress[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: Error processing market %s: %s | Wallet: %s - #%d", market.question, str(e), walletAddress[:10], candidateNumber)
             return None, 0
 
-    def processMarketWithClosedPositions(self, market: Market, cutoffTimestamp: int) -> Optional[Decimal]:
+    def processMarketWithClosedPositions(self, market: Market, cutoffTimestamp: int, candidateNumber: int) -> Optional[Decimal]:
         # Calculate PNL from API realizedPnl
         marketPnl = sum(
             (pos.apiRealizedPnl or Decimal('0')) for pos in market.positions
@@ -298,10 +305,10 @@ class WalletEvaluvationService:
 
         # Check if any closed position is in range (check both endDate and timestamp)
         if self.hasClosedPositionsInRange(market.positions, cutoffTimestamp):
-            logger.info("SMART_WALLET_DISCOVERY :: Market with all closed positions IN RANGE | Market: %s | PNL: %.2f",market.question, float(marketPnl))
+            logger.info("SMART_WALLET_DISCOVERY :: Market with all closed positions IN RANGE | Market: %s | PNL: %.2f - #%d",market.question, float(marketPnl), candidateNumber)
             return marketPnl
         else:
-            logger.info("SMART_WALLET_DISCOVERY :: Market with all closed positions NOT in range: %s", market.question)
+            logger.info("SMART_WALLET_DISCOVERY :: Market with all closed positions NOT in range: %s - #%d", market.question, candidateNumber)
             return None
 
     def hasTradesInRange(self, dailyTradesMap: Dict, cutoffTimestamp: int) -> bool:
@@ -339,6 +346,9 @@ class WalletEvaluvationService:
                 → Position closed after market ended (edge case)
                 → Only check if endDate is within range (more reliable)
 
+        Special handling:
+            If endDate is epoch start (1970-01-01), ignore it and use only timestamp
+
         Args:
             positions: List of positions to check
             cutoffTimestamp: Unix timestamp for the start of activity window
@@ -350,7 +360,22 @@ class WalletEvaluvationService:
             if position.positionStatus != PositionStatus.CLOSED:
                 continue
 
-            positionEndDateTimestamp = self.parseEndDateToTimestamp(position.endDate)
+            # Check if endDate is epoch start (invalid date from API)
+            isEpochStart = False
+            if position.endDate:
+                if isinstance(position.endDate, str) and position.endDate.startswith('1970-01-01'):
+                    isEpochStart = True
+                elif isinstance(position.endDate, datetime) and position.endDate.year == 1970 and position.endDate.month == 1 and position.endDate.day == 1:
+                    isEpochStart = True
+
+            # If epoch start, ignore endDate and use only timestamp
+            if isEpochStart:
+                logger.info("WALLET_EVAL :: Epoch start detected, using timestamp only | Timestamp: %s",
+                          self._formatTimestamp(position.timestamp) if position.timestamp else "None")
+                positionEndDateTimestamp = None
+            else:
+                positionEndDateTimestamp = self.parseEndDateToTimestamp(position.endDate)
+
             positionCloseTimestamp = position.timestamp
 
             if self.isPositionInRange(positionCloseTimestamp, positionEndDateTimestamp, cutoffTimestamp):
@@ -494,7 +519,7 @@ class WalletEvaluvationService:
                         conditionId[:10], str(e))
             return None, None
 
-    def calculateMarketPnlFromTrades(self, market: Market, dailyTradesMap: Dict) -> None:
+    def calculateMarketPnlFromTrades(self, market: Market, dailyTradesMap: Dict, candidateNumber: int) -> None:
         """
         Calculate PNL for market from trades and set on both market and all positions.
         All positions in the market get the same market-level values.
@@ -531,7 +556,7 @@ class WalletEvaluvationService:
             position.setPnlCalculations(totalInvested, totalTakenOut, marketPnl, currentValue)
             position.tradeStatus = TradeStatus.TRADES_SYNCED
 
-        logger.info("SMART_WALLET_DISCOVERY :: Market PNL calculated | Market: %s | PNL: %.2f | Invested: %.2f | Out: %.2f",market.question, float(marketPnl), float(totalInvested), float(totalTakenOut))
+        logger.info("SMART_WALLET_DISCOVERY :: Market PNL calculated | Market: %s | PNL: %.2f | Invested: %.2f | Out: %.2f - #%d",market.question, float(marketPnl), float(totalInvested), float(totalTakenOut), candidateNumber)
 
     def passesActivityFilter(self, tradeCount: int, positionCount: int) -> bool:
         """Check if wallet passes activity thresholds."""

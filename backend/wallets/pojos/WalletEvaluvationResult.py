@@ -19,6 +19,8 @@ class WalletEvaluvationResult:
     tradeCount: int = 0
     positionCount: int = 0
     combinedPnl: Decimal = Decimal('0')
+    openPnl: Decimal = Decimal('0')
+    closedPnl: Decimal = Decimal('0')
 
     # Hierarchical structure: Dict[eventSlug, Event]
     eventHierarchy: Dict = field(default_factory=dict)

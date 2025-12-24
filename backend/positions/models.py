@@ -158,6 +158,13 @@ class Position(models.Model):
         help_text="Position/market end date"
     )
 
+    timestamp = models.BigIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Position timestamp from API (Unix timestamp) - used for closed positions"
+    )
+
     negativerisk = models.BooleanField(
         default=False,
         help_text="Whether this is a negative risk position"
