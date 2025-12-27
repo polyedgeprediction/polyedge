@@ -54,7 +54,12 @@ class Market:
     # PNL calculation fields (calculated from trades or API)
     calculatedAmountInvested: Optional[Decimal] = None
     calculatedAmountTakenOut: Optional[Decimal] = None
+    calculatedCurrentValue: Optional[Decimal] = None
     calculatedPnl: Optional[Decimal] = None
+
+    # Trade date range (for period filtering in scheduler)
+    earliestTradeDate: Optional[date] = None
+    latestTradeDate: Optional[date] = None
 
     # Position count tracking
     openPositionCount: int = 0
@@ -118,10 +123,11 @@ class Market:
         """Check if this market has any open positions."""
         return self.openPositionCount > 0
 
-    def setPnlCalculations(self, amountInvested: Decimal, amountTakenOut: Decimal, pnl: Decimal) -> None:
+    def setPnlCalculations(self, amountInvested: Decimal, amountTakenOut: Decimal, pnl: Decimal, currentValue: Decimal = Decimal('0')) -> None:
         """Set calculated PNL metrics for this market."""
         self.calculatedAmountInvested = amountInvested
         self.calculatedAmountTakenOut = amountTakenOut
+        self.calculatedCurrentValue = currentValue
         self.calculatedPnl = pnl
 
 

@@ -105,7 +105,7 @@ class SmartWalletDiscoveryService:
                 try:
                     future.result()  # This will raise any exception that occurred during processing
                 except Exception as e:
-                    logger.info("SMART_WALLET_DISCOVERY :: Unexpected error in parallel processing for wallet %s: %s",candidate.proxyWallet[:10], str(e), exc_info=True)
+                    logger.info("SMART_WALLET_DISCOVERY :: Unexpected error in parallel processing | #%d | Wallet: %s | Error: %s",candidate.number, candidate.proxyWallet[:10], str(e))
                     metrics.recordProcessingError()
 
         logger.info("SMART_WALLET_DISCOVERY :: Batch complete | Processed: %d | Passed: %d | Persisted: %d",metrics.totalProcessed, metrics.passedEvaluation, metrics.successfullyPersisted)
@@ -132,7 +132,7 @@ class SmartWalletDiscoveryService:
                 logger.info("SMART_WALLET_DISCOVERY :: PASSED | #%d | Wallet: %s | Trades: %d | PNL: %.2f",candidate.number, candidate.proxyWallet[:10], evaluationResult.tradeCount, float(evaluationResult.combinedPnl))
 
                 # Step 2: Persist wallet and hierarchy (with database lock)
-                persistedWallet = self.persistenceService.persistWallet(evaluationResult)
+                persistedWallet = self.persistenceService.persistWallet(evaluationResult, candidate.number)
 
                 if persistedWallet:
                     metrics.recordPersisted(1)

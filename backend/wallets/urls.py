@@ -7,5 +7,6 @@ from . import views
 urlpatterns = [
     path('discover', views.evaluateWalletsFromLeaderboard, name='discover-and-filter-wallets'),
     path('filter', views.evaluateWalletsOnDemand, name='filter-specific-wallets'),
+    path('pnl/calculate', views.calculateWalletPnl, name='calculate-wallet-pnl'),
 ]
 

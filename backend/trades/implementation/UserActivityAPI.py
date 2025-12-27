@@ -11,6 +11,7 @@ from positions.implementations.polymarket.Constants import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY_SECONDS
 )
+from framework.rateLimiting import RateLimitedRequestHandler, RateLimiterType
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 class UserActivityAPI:
     """
     Client for fetching user activity data from Polymarket API.
-    Used specifically for wallet discovery and filtering.
+    Uses production-grade rate limiting with connection pooling.
     """
 
     BASE_URL = "https://data-api.polymarket.com"
@@ -33,6 +34,11 @@ class UserActivityAPI:
         self.timeout = timeout
         self.maxRetries = maxRetries
         self.retryDelay = retryDelay
+        # Use rate-limited request handler for trades
+        self.requestHandler = RateLimitedRequestHandler(
+            limiterType=RateLimiterType.TRADES,
+            sessionKey="polymarket_trades"
+        )
 
     def fetchActivity(self, walletAddress: str, conditionId: str, startTimestamp: int = None, endTimestamp: int = None) -> List[dict]:
         """
@@ -81,8 +87,6 @@ class UserActivityAPI:
             # Move to next page
             offset += limit
             
-            # Rate limiting
-            time.sleep(0.1)
         
         return allActivities
 
@@ -131,7 +135,6 @@ class UserActivityAPI:
                 break
             
             offset += limit
-            time.sleep(0.1)  # Rate limiting
         
         return count
 
@@ -148,47 +151,44 @@ class UserActivityAPI:
 
 
     def _makeRequest(
-        self, 
-        params: Dict[str, Any], 
-        walletAddress: str, 
+        self,
+        params: Dict[str, Any],
+        walletAddress: str,
         conditionId: str
     ) -> List[Dict[str, Any]]:
         """
-        Make HTTP request to activity API with retry logic.
+        Make rate-limited HTTP request with automatic retries and exponential backoff.
         """
         url = f"{self.BASE_URL}{self.ACTIVITY_ENDPOINT}"
-        lastException = None
-        
-        for attempt in range(1, self.maxRetries + 1):
-            try:
-                response = requests.get(url, params=params, timeout=self.timeout)
-                
-                if response.status_code == 200:
-                    return response.json()
-                
-                elif response.status_code == 404:
-                    return []
-                
-                else:
-                    lastException = Exception(
-                        f"Status {response.status_code}: {response.text}"
-                    )
-                    
-            except requests.exceptions.Timeout as e:
-                lastException = e
-                
-            except requests.exceptions.RequestException as e:
-                lastException = e
-            
-            if attempt < self.maxRetries:
-                time.sleep(self.retryDelay)
-        
-        errorMsg = f"Failed to fetch user activity after {self.maxRetries} attempts"
-        logger.error(
-            "USER_ACTIVITY_API :: %s | Wallet: %s | Market: %s | Offset: %d",
-            errorMsg,
-            walletAddress[:10],
-            conditionId[:10],
-            params.get('offset', 0)
-        )
-        raise Exception(errorMsg) from lastException
+
+        try:
+            response = self.requestHandler.get(url, params=params, timeout=self.timeout)
+
+            if response.status_code == 200:
+                return response.json()
+
+            elif response.status_code == 404:
+                return []
+
+            else:
+                errorMsg = f"Failed to fetch user activity: Status {response.status_code}"
+                logger.error(
+                    "USER_ACTIVITY_API :: %s | Wallet: %s | Market: %s | Offset: %d",
+                    errorMsg,
+                    walletAddress[:10],
+                    conditionId[:10],
+                    params.get('offset', 0)
+                )
+                raise Exception(f"{errorMsg}: {response.text}")
+
+        except Exception as e:
+            errorMsg = f"Failed to fetch user activity"
+            logger.error(
+                "USER_ACTIVITY_API :: %s | Wallet: %s | Market: %s | Offset: %d | Error: %s",
+                errorMsg,
+                walletAddress[:10],
+                conditionId[:10],
+                params.get('offset', 0),
+                str(e)
+            )
+            raise
