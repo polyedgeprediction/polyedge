@@ -148,6 +148,290 @@ class Wallet(models.Model):
         return self.proxywallet
 
 
+class WalletPnl(models.Model):
+    """
+    Stores current PnL for different time periods per wallet.
+    Pre-calculated to avoid repeated API calls and heavy computations.
+    """
+
+    pnlid = models.AutoField(primary_key=True)
+
+    wallet = models.ForeignKey(
+        Wallet,
+        on_delete=models.CASCADE,
+        related_name='pnl_records',
+        db_column='walletid',
+        help_text="Wallet this PnL belongs to"
+    )
+
+    period = models.IntegerField(
+        db_index=True,
+        help_text="PnL period in days (30, 60, 90, etc.)"
+    )
+
+    start = models.DateTimeField(
+        help_text="Period start timestamp"
+    )
+
+    end = models.DateTimeField(
+        help_text="Period end timestamp"
+    )
+
+    # Open positions (unrealized)
+    openamountinvested = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount invested in open positions"
+    )
+
+    openamountout = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount withdrawn from open positions"
+    )
+
+    opencurrentvalue = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Current value of open positions"
+    )
+
+    # Closed positions (realized)
+    closedamountinvested = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount invested in closed positions"
+    )
+
+    closedamountout = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount withdrawn from closed positions"
+    )
+
+    closedcurrentvalue = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Current value of closed positions (typically 0)"
+    )
+
+    # Totals
+    totalinvestedamount = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        db_index=True,
+        help_text="Total amount invested (open + closed)"
+    )
+
+    totalamountout = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount withdrawn (open + closed)"
+    )
+
+    currentvalue = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total current value (open + closed)"
+    )
+
+    # Timestamps
+    createdat = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When this record was created"
+    )
+
+    lastupdatedat = models.DateTimeField(
+        auto_now=True,
+        help_text="When this record was last updated"
+    )
+
+    class Meta:
+        db_table = 'walletpnl'
+        verbose_name = 'Wallet PnL'
+        verbose_name_plural = 'Wallet PnLs'
+        ordering = ['-lastupdatedat']
+        unique_together = [['wallet', 'period']]  # One record per wallet per period
+
+        indexes = [
+            models.Index(fields=['wallet', 'period']),
+            models.Index(fields=['period']),
+            models.Index(fields=['lastupdatedat']),
+        ]
+
+    def __str__(self):
+        return f"PnL for {self.wallet.username} ({self.period} days)"
+
+    @property
+    def open_pnl(self):
+        """Calculate open PnL: (current value + amount out) - amount invested"""
+        return (self.opencurrentvalue + self.openamountout) - self.openamountinvested
+
+    @property
+    def closed_pnl(self):
+        """Calculate closed PnL: (current value + amount out) - amount invested"""
+        return (self.closedcurrentvalue + self.closedamountout) - self.closedamountinvested
+
+    @property
+    def total_pnl(self):
+        """Calculate total PnL"""
+        return self.open_pnl + self.closed_pnl
+
+
+class WalletPnlHistory(models.Model):
+    """
+    Historical snapshots of wallet PnL.
+    Tracks PnL changes over time for analysis and reporting.
+    """
+
+    pnlhistoryid = models.AutoField(primary_key=True)
+
+    pnl = models.ForeignKey(
+        WalletPnl,
+        on_delete=models.CASCADE,
+        related_name='history',
+        db_column='pnlid',
+        help_text="Reference to the current PnL record"
+    )
+
+    wallet = models.ForeignKey(
+        Wallet,
+        on_delete=models.CASCADE,
+        related_name='pnl_history',
+        db_column='walletid',
+        help_text="Wallet this history belongs to"
+    )
+
+    period = models.IntegerField(
+        db_index=True,
+        help_text="PnL period in days (30, 60, 90, etc.)"
+    )
+
+    start = models.DateTimeField(
+        help_text="Period start timestamp"
+    )
+
+    end = models.DateTimeField(
+        help_text="Period end timestamp"
+    )
+
+    # Open positions (unrealized)
+    openamountinvested = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount invested in open positions"
+    )
+
+    openamountout = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount withdrawn from open positions"
+    )
+
+    opencurrentvalue = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Current value of open positions"
+    )
+
+    # Closed positions (realized)
+    closedamountinvested = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount invested in closed positions"
+    )
+
+    closedamountout = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount withdrawn from closed positions"
+    )
+
+    closedcurrentvalue = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Current value of closed positions (typically 0)"
+    )
+
+    # Totals
+    totalinvestedamount = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount invested (open + closed)"
+    )
+
+    totalamountout = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total amount withdrawn (open + closed)"
+    )
+
+    currentvalue = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0.00,
+        help_text="Total current value (open + closed)"
+    )
+
+    # Timestamps
+    createdat = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When this snapshot was created"
+    )
+
+    lastupdatedat = models.DateTimeField(
+        auto_now=True,
+        help_text="When this snapshot was last updated"
+    )
+
+    class Meta:
+        db_table = 'walletpnlhistory'
+        verbose_name = 'Wallet PnL History'
+        verbose_name_plural = 'Wallet PnL Histories'
+        ordering = ['-createdat']
+
+        indexes = [
+            models.Index(fields=['pnl', 'createdat']),
+            models.Index(fields=['wallet', 'period', 'createdat']),
+            models.Index(fields=['createdat']),
+        ]
+
+    def __str__(self):
+        return f"PnL History for {self.wallet.username} ({self.period} days) - {self.createdat}"
+
+    @property
+    def open_pnl(self):
+        """Calculate open PnL: (current value + amount out) - amount invested"""
+        return (self.opencurrentvalue + self.openamountout) - self.openamountinvested
+
+    @property
+    def closed_pnl(self):
+        """Calculate closed PnL: (current value + amount out) - amount invested"""
+        return (self.closedcurrentvalue + self.closedamountout) - self.closedamountinvested
+
+    @property
+    def total_pnl(self):
+        """Calculate total PnL"""
+        return self.open_pnl + self.closed_pnl
+
+
 class Lock(models.Model):
     """
     Lock table for managing concurrent wallet persistence operations.

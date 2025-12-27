@@ -14,6 +14,7 @@ from .implementations.polymarket.Constants import (
     TIME_PERIOD_MONTH
 )
 from wallets.services.SmartWalletDiscoveryService import SmartWalletDiscoveryService
+from wallets.schedulers.WalletPnlScheduler import WalletPnlScheduler
 from wallets.pojos.WalletCandidate import WalletCandidate
 from decimal import Decimal
 import time
@@ -210,5 +211,60 @@ def evaluateWalletsOnDemand(request: Request) -> Response:
                 'positions_persisted': 0,
                 'execution_time_seconds': executionTime
             },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+def calculateWalletPnl(request: Request) -> Response:
+    """
+    Calculate and persist PnL for wallets across multiple periods.
+
+    Endpoint: POST /api/smartwallets/pnl/calculate
+
+    Request Body (all fields optional):
+        {
+            "walletIds": [1, 2, 3],  // Optional: Specific wallet IDs (default: all active wallets)
+            "periods": [30, 60, 90]  // Optional: Period days (default: [30, 60, 90])
+        }
+
+    Response:
+        {
+            "totalWallets": 100,
+            "totalCalculations": 300,
+            "succeeded": 295,
+            "failed": 5,
+            "errorCount": 5,
+            "errors": [...],
+            "periodStats": {
+                "30": {"succeeded": 98, "failed": 2},
+                "60": {"succeeded": 99, "failed": 1},
+                "90": {"succeeded": 98, "failed": 2}
+            },
+            "durationSeconds": 45.2,
+            "startTime": "2025-12-27 10:30:00",
+            "workersUsed": 50
+        }
+    """
+    try:
+        walletIds = request.data.get('walletIds') if request.data else None
+        periods = request.data.get('periods') if request.data else None
+
+        logger.info("PNL_SCHEDULER :: API request received | WalletIds: %s | Periods: %s",
+                   walletIds if walletIds else "all", periods if periods else "default")
+
+        # Execute PnL calculation
+        scheduler = WalletPnlScheduler()
+        result = scheduler.runScheduler(periodDays=periods, walletIds=walletIds)
+
+        logger.info("PNL_SCHEDULER :: API request complete | Succeeded: %d | Failed: %d",
+                   result['succeeded'], result['failed'])
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error("PNL_SCHEDULER :: API request failed: %s", str(e), exc_info=True)
+        return Response(
+            APIResponseBuilder.error(f"PnL calculation failed: {str(e)}"),
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

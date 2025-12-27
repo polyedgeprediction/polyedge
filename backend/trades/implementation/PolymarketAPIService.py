@@ -80,7 +80,6 @@ class PolymarketAPIService:
                 break
             
             offset += PolymarketAPIService.DEFAULT_LIMIT
-            time.sleep(PolymarketAPIService.RATE_LIMIT_DELAY)
         
         logger.info(f"SMART_WALLET_DISCOVERY :: Completed{logPrefix}: {proxyWallet} - {conditionId} - {len(allTrades)}")
         return allTrades, latestTimestamp
@@ -149,7 +148,6 @@ class PolymarketAPIService:
                 if e.response.status_code == 429:  # Rate limit
                     delay = (2 ** attempt) * PolymarketAPIService.RATE_LIMIT_DELAY
                     logger.warning(f"Rate limited, waiting {delay}s before retry")
-                    time.sleep(delay)
                 elif attempt == PolymarketAPIService.MAX_RETRIES - 1:
                     logger.error(f"HTTP error {e.response.status_code}: {e}")
                     raise
@@ -157,7 +155,6 @@ class PolymarketAPIService:
             except requests.exceptions.RequestException as e:
                 if attempt < PolymarketAPIService.MAX_RETRIES - 1:
                     delay = (2 ** attempt) * PolymarketAPIService.RATE_LIMIT_DELAY
-                    time.sleep(delay)
                 else:
                     logger.error(f"Request failed after {PolymarketAPIService.MAX_RETRIES} attempts: {e}")
                     raise

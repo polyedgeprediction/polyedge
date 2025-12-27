@@ -17,7 +17,7 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 
-from wallets.models import Wallet, Lock
+from wallets.models import Wallet, Lock, WalletPnl
 from wallets.enums import WalletType
 from wallets.Constants import SMART_WALLET_DISCOVERY
 from events.models import Event as EventModel
@@ -105,7 +105,7 @@ class WalletPersistenceService:
             logger.info("SMART_WALLET_DISCOVERY :: Failed to release lock: %s", str(e), exc_info=True)
 
     @staticmethod
-    def persistWallet(evaluationResult: WalletEvaluvationResult) -> Optional[Wallet]:
+    def persistWallet(evaluationResult: WalletEvaluvationResult, candidateNumber: int) -> Optional[Wallet]:
         """
         Persist wallet with PnL calculated as a whole.
 
@@ -122,15 +122,15 @@ class WalletPersistenceService:
             Single Wallet instance if successful, None otherwise
         """
         if not evaluationResult.passed:
-            logger.info("SMART_WALLET_DISCOVERY :: Attempted to persist failed wallet: %s",evaluationResult.walletAddress[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: Attempted to persist failed wallet: %s - #%d",evaluationResult.walletAddress[:10], candidateNumber)
             return None
 
         try:
             # Get categories as comma-separated string
-            categories = WalletPersistenceService.getCategoriesFromCandidate(evaluationResult)
+            categories = WalletPersistenceService.getCategoriesFromCandidate(evaluationResult, candidateNumber)
 
             # Check if wallet already exists
-            existingWallet = WalletPersistenceService.getExistingWallet(evaluationResult.walletAddress)
+            existingWallet = WalletPersistenceService.getExistingWallet(evaluationResult.walletAddress, candidateNumber)
 
             # Handle existing vs new wallet
             if existingWallet:
@@ -143,19 +143,19 @@ class WalletPersistenceService:
                     evaluationResult.combinedPnl
                 )
             else:
-                wallet = WalletPersistenceService.persistNewWallet(evaluationResult, categories)
+                wallet = WalletPersistenceService.persistNewWallet(evaluationResult, categories, candidateNumber)
 
             if wallet:
-                logger.info("SMART_WALLET_DISCOVERY :: Complete | Wallet: %s | Categories: %s",wallet.proxywallet[:10], wallet.category or "None")
+                logger.info("SMART_WALLET_DISCOVERY :: Complete | Wallet: %s | Categories: %s - #%d",wallet.proxywallet[:10], wallet.category or "None", candidateNumber)
 
             return wallet
 
         except Exception as e:
-            logger.info("SMART_WALLET_DISCOVERY :: Failed | Wallet: %s | Error: %s",evaluationResult.walletAddress[:10], str(e), exc_info=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Failed | Wallet: %s | Error: %s - #%d",evaluationResult.walletAddress[:10], str(e), candidateNumber, exc_info=True)
             return None
 
     @staticmethod
-    def getCategoriesFromCandidate(evaluationResult: WalletEvaluvationResult) -> Optional[str]:
+    def getCategoriesFromCandidate(evaluationResult: WalletEvaluvationResult, candidateNumber: int) -> Optional[str]:     
         """
         Extract categories from candidate and return as comma-separated string.
         Categories are sorted alphabetically and deduplicated.
@@ -171,7 +171,7 @@ class WalletPersistenceService:
         categories = candidate.categories if candidate and candidate.categories else []
 
         if not categories:
-            logger.info("SMART_WALLET_DISCOVERY :: No categories found for wallet: %s",evaluationResult.walletAddress[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: No categories found for wallet: %s - #%d",evaluationResult.walletAddress[:10], candidateNumber)
             return None
 
         # Remove duplicates, sort alphabetically, and join
@@ -233,7 +233,7 @@ class WalletPersistenceService:
         return ','.join(sorted(categories)) if categories else None
 
     @staticmethod
-    def persistNewWallet(evaluationResult: WalletEvaluvationResult, categories: Optional[str]) -> Optional[Wallet]:
+    def persistNewWallet(evaluationResult: WalletEvaluvationResult, categories: Optional[str], candidateNumber: int) -> Optional[Wallet]:
         """
         Persist new wallet with full hierarchy using database lock.
         """
@@ -241,17 +241,17 @@ class WalletPersistenceService:
             WalletPersistenceService.acquireLock(SMART_WALLET_DISCOVERY)
 
             try:
-                wallet = WalletPersistenceService.persistWalletHierarchy(evaluationResult, categories)
+                wallet = WalletPersistenceService.persistWalletHierarchy(evaluationResult, categories, candidateNumber)
 
                 if wallet:
-                    logger.info("SMART_WALLET_DISCOVERY :: Persisted new wallet | Address: %s | Categories: %s",wallet.proxywallet[:10], categories or "None")
+                    logger.info("SMART_WALLET_DISCOVERY :: Persisted new wallet | Address: %s | Categories: %s - #%d",wallet.proxywallet[:10], categories or "None", candidateNumber)
                 return wallet
 
             finally:
                 WalletPersistenceService.releaseLock(SMART_WALLET_DISCOVERY)
 
     @staticmethod
-    def persistWalletHierarchy(evaluationResult: WalletEvaluvationResult, categories: Optional[str]) -> Optional[Wallet]:
+    def persistWalletHierarchy(evaluationResult: WalletEvaluvationResult, categories: Optional[str], candidateNumber: int) -> Optional[Wallet]:
         """
         Persist wallet and complete hierarchy (events → markets → positions → trades).
 
@@ -265,7 +265,7 @@ class WalletPersistenceService:
         try:
             candidate = evaluationResult.candidate
             if not candidate:
-                logger.info("SMART_WALLET_DISCOVERY :: No candidate data")
+                logger.info("SMART_WALLET_DISCOVERY :: No candidate data - #%d", candidateNumber)
                 return None
 
             # Create wallet record with PnL values
@@ -282,11 +282,14 @@ class WalletPersistenceService:
             eventHierarchy = evaluationResult.eventHierarchy
 
             # Persist hierarchy: Events → Markets → Positions → Trades → Batches
-            eventLookup = WalletPersistenceService.persistEvents(eventHierarchy)
-            marketLookup = WalletPersistenceService.persistMarkets(eventHierarchy, eventLookup)
-            WalletPersistenceService.persistPositions(wallet, eventHierarchy, marketLookup)
-            WalletPersistenceService.persistTrades(wallet, eventHierarchy, marketLookup)
-            WalletPersistenceService.createBatchRecords(wallet, eventHierarchy, marketLookup)
+            eventLookup = WalletPersistenceService.persistEvents(eventHierarchy, candidateNumber)
+            marketLookup = WalletPersistenceService.persistMarkets(eventHierarchy, eventLookup, candidateNumber)
+            WalletPersistenceService.persistPositions(wallet, eventHierarchy, marketLookup, candidateNumber)
+            WalletPersistenceService.persistTrades(wallet, eventHierarchy, marketLookup, candidateNumber)
+            WalletPersistenceService.createBatchRecords(wallet, eventHierarchy, marketLookup, candidateNumber)
+
+            # Persist 30-day PnL data (already calculated during discovery)
+            WalletPersistenceService.persistPnlData(wallet, evaluationResult, candidateNumber, 30)
 
             # Mark wallet as processed
             wallet.wallettype = WalletType.OLD
@@ -295,15 +298,15 @@ class WalletPersistenceService:
             return wallet
 
         except Exception as e:
-            logger.error("SMART_WALLET_DISCOVERY :: Persistence failed | Error: %s", str(e), exc_info=True)
+            logger.info("SMART_WALLET_DISCOVERY :: Persistence failed | Error: %s - #%d", str(e), candidateNumber, exc_info=True)
             return None
 
     @staticmethod
-    def getExistingWallet(walletAddress: str) -> Optional[Wallet]:
+    def getExistingWallet(walletAddress: str, candidateNumber: int) -> Optional[Wallet]:
         try:
             return Wallet.objects.filter(proxywallet=walletAddress).first()
         except Exception as e:
-            logger.info("SMART_WALLET_DISCOVERY :: Error fetching wallet: %s", str(e))
+            logger.info("SMART_WALLET_DISCOVERY :: Error fetching wallet: %s - #%d", str(e), candidateNumber)
             return None
 
     @staticmethod
@@ -338,7 +341,7 @@ class WalletPersistenceService:
             return None
 
     @staticmethod
-    def persistEvents(eventHierarchy: Dict[str, Event]) -> Dict[str, EventModel]:
+    def persistEvents(eventHierarchy: Dict[str, Event], candidateNumber: int) -> Dict[str, EventModel]:
         """
         Persist all events using bulk upsert.
         1. Bulk create/update all events (1 query)
@@ -386,11 +389,11 @@ class WalletPersistenceService:
         allEvents = EventModel.objects.filter(eventslug__in=eventSlugs).all()
         eventLookup = {event.eventslug: event for event in allEvents}
 
-        logger.info("SMART_WALLET_DISCOVERY :: Events lookup built: %d", len(eventLookup))
+        logger.info("SMART_WALLET_DISCOVERY :: Events lookup built: %d - #%d", len(eventLookup), candidateNumber)
         return eventLookup
 
     @staticmethod
-    def persistMarkets(eventHierarchy: Dict[str, Event],eventLookup: Dict[str, EventModel]) -> Dict[str, MarketModel]:
+    def persistMarkets(eventHierarchy: Dict[str, Event],eventLookup: Dict[str, EventModel], candidateNumber: int) -> Dict[str, MarketModel]:
         """
         Persist all markets using bulk upsert.
         1. Bulk create/update all markets (1 query)
@@ -447,11 +450,11 @@ class WalletPersistenceService:
         allMarkets = MarketModel.objects.filter(platformmarketid__in=allConditionIds).all()
         marketLookup = {market.platformmarketid: market for market in allMarkets}
 
-        logger.info("SMART_WALLET_DISCOVERY :: Markets lookup built: %d", len(marketLookup))
+        logger.info("SMART_WALLET_DISCOVERY :: Markets lookup built: %d - #%d", len(marketLookup), candidateNumber)
         return marketLookup
 
     @staticmethod
-    def persistPositions(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel]) -> None:
+    def persistPositions(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel], candidateNumber: int) -> None:
         """Persist all positions with proper foreign keys."""
         positionsToCreate = []
 
@@ -459,22 +462,21 @@ class WalletPersistenceService:
             for conditionId, market in event.markets.items():
                 marketModel = marketLookup.get(conditionId)
                 if not marketModel:
-                    logger.warning("SMART_WALLET_DISCOVERY :: No market model for: %s", conditionId[:10])
+                    logger.warning("SMART_WALLET_DISCOVERY :: No market model for: %s - #%d", conditionId[:10], candidateNumber)
                     continue
 
                 for position in market.positions:
-                    positionObj = WalletPersistenceService.createPositionObject(wallet,marketModel,position)
+                    positionObj = WalletPersistenceService.createPositionObject(wallet,marketModel,position, candidateNumber)
                     if positionObj:
                         positionsToCreate.append(positionObj)
 
         # Bulk create positions
         if positionsToCreate:
             PositionModel.objects.bulk_create(positionsToCreate, ignore_conflicts=True)
-            logger.info("SMART_WALLET_DISCOVERY :: Positions created: %d | Wallet: %s",
-                       len(positionsToCreate), wallet.proxywallet[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: Positions created: %d | Wallet: %s - #%d",len(positionsToCreate), wallet.proxywallet[:10], candidateNumber)
 
     @staticmethod
-    def createPositionObject(wallet: Wallet,marketModel: MarketModel,position: Position) -> Optional[PositionModel]:
+    def createPositionObject(wallet: Wallet,marketModel: MarketModel,position: Position, candidateNumber: int) -> Optional[PositionModel]:
         """Create Position model object from Position POJO."""
         try:
             # Convert empty string to None for datetime field
@@ -506,11 +508,11 @@ class WalletPersistenceService:
             )
 
         except Exception as e:
-            logger.error("SMART_WALLET_DISCOVERY :: Failed to create position object: %s", str(e))
+            logger.info("SMART_WALLET_DISCOVERY :: Failed to create position object: %s - #%d", str(e), candidateNumber)
             return None
 
     @staticmethod
-    def persistTrades(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel]) -> None:
+    def persistTrades(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel], candidateNumber: int) -> None:
         """Persist all trades from markets that have dailyTrades data."""
         tradesToCreate = []
 
@@ -542,11 +544,10 @@ class WalletPersistenceService:
         # Bulk create trades
         if tradesToCreate:
             Trade.objects.bulk_create(tradesToCreate, ignore_conflicts=True)
-            logger.info("PERSIST :: Trades created: %d | Wallet: %s",
-                       len(tradesToCreate), wallet.proxywallet[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: Trades created: %d | Wallet: %s - #%d",len(tradesToCreate), wallet.proxywallet[:10], candidateNumber)
 
     @staticmethod
-    def createBatchRecords(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel]) -> None:
+    def createBatchRecords(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel], candidateNumber: int) -> None:
         """Create batch records for markets with fetched trades."""
         batchesToCreate = []
 
@@ -570,4 +571,49 @@ class WalletPersistenceService:
         # Bulk create batches
         if batchesToCreate:
             Batch.objects.bulk_create(batchesToCreate, ignore_conflicts=True)
-            logger.info("SMART_WALLET_DISCOVERY :: Batch records created: %d | Wallet: %s",len(batchesToCreate), wallet.proxywallet[:10])
+            logger.info("SMART_WALLET_DISCOVERY :: Batch records created: %d | Wallet: %s - #%d",len(batchesToCreate), wallet.proxywallet[:10], candidateNumber)
+
+    @staticmethod
+    def persistPnlData(wallet: Wallet, evaluationResult: WalletEvaluvationResult, candidateNumber: int,period: int) -> None:
+        try:
+            # Calculate 30-day period
+            now = timezone.now()
+            periodStart = now - timezone.timedelta(days=period)
+            periodEnd = now
+
+            # Use amounts from evaluationResult (already calculated during discovery)
+            pnlData = {
+                'period': period,
+                'start': periodStart,
+                'end': periodEnd,
+                'openamountinvested': evaluationResult.openAmountInvested,
+                'openamountout': evaluationResult.openAmountOut,
+                'opencurrentvalue': evaluationResult.openCurrentValue,
+                'closedamountinvested': evaluationResult.closedAmountInvested,
+                'closedamountout': evaluationResult.closedAmountOut,
+                'closedcurrentvalue': evaluationResult.closedCurrentValue,
+                'totalinvestedamount': evaluationResult.totalInvestedAmount,
+                'totalamountout': evaluationResult.totalAmountOut,
+                'currentvalue': evaluationResult.totalCurrentValue
+            }
+
+            # Create or update PnL record
+            pnlRecord, created = WalletPnl.objects.update_or_create(
+                wallet=wallet,
+                period=period,
+                defaults=pnlData
+            )
+
+            action = "Created" if created else "Updated"
+            logger.info("SMART_WALLET_DISCOVERY :: %s 30-day PnL | Wallet: %s | Total Invested: %.2f | Current Value: %.2f - #%d",action,wallet.proxywallet[:10],
+                float(evaluationResult.totalInvestedAmount),
+                float(evaluationResult.totalCurrentValue),
+                candidateNumber
+            )
+
+        except Exception as e:
+            logger.info("SMART_WALLET_DISCOVERY :: Failed to persist PnL data | Wallet: %s | Error: %s - #%d",wallet.proxywallet[:10],
+                str(e),
+                candidateNumber,
+                exc_info=True
+            )
