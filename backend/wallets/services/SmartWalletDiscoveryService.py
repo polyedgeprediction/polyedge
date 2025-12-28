@@ -112,14 +112,6 @@ class SmartWalletDiscoveryService:
         return metrics
 
     def processSingleCandidate(self, candidate: WalletCandidate, metrics: WalletDiscoveryMetrics) -> None:
-        """
-        Process a single wallet candidate (evaluation + persistence).
-        This method is called by worker threads in parallel.
-
-        Args:
-            candidate: The wallet candidate to process
-            metrics: Shared metrics object (thread-safe)
-        """
         metrics.incrementProcessed()
 
         try:

@@ -1,8 +1,9 @@
 """
 POJO classes for position update statistics.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
+import threading
 
 
 @dataclass
@@ -25,9 +26,9 @@ class WalletUpdateStats:
         return self.updated + self.markedClosed + self.reopened
 
 
-@dataclass 
+@dataclass
 class SchedulerExecutionStats:
-    """Overall statistics for scheduler execution"""
+    """Thread-safe overall statistics for scheduler execution"""
     walletsProcessed: int = 0
     walletsSucceeded: int = 0
     walletsFailed: int = 0
@@ -38,25 +39,27 @@ class SchedulerExecutionStats:
     errors: List[str] = None
     success: bool = True
     message: str = None
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self):
         if self.errors is None:
             self.errors = []
 
     def addWalletStats(self, walletStats: WalletUpdateStats) -> None:
-        """Add stats from a single wallet update"""
-        self.walletsProcessed += 1
-        
-        if walletStats.success:
-            self.walletsSucceeded += 1
-            self.totalUpdated += walletStats.updated
-            self.totalMarkedClosed += walletStats.markedClosed
-            self.totalReopened += walletStats.reopened
-            self.totalCreated += getattr(walletStats, 'created', 0)  # Handle backward compatibility
-        else:
-            self.walletsFailed += 1
-            if walletStats.errorMessage:
-                self.errors.append(f"{walletStats.walletAddress[:10]}: {walletStats.errorMessage}")
+        """Thread-safe method to add stats from a single wallet update"""
+        with self._lock:
+            self.walletsProcessed += 1
+
+            if walletStats.success:
+                self.walletsSucceeded += 1
+                self.totalUpdated += walletStats.updated
+                self.totalMarkedClosed += walletStats.markedClosed
+                self.totalReopened += walletStats.reopened
+                self.totalCreated += getattr(walletStats, 'created', 0)  # Handle backward compatibility
+            else:
+                self.walletsFailed += 1
+                if walletStats.errorMessage:
+                    self.errors.append(f"{walletStats.walletAddress[:10]}: {walletStats.errorMessage}")
 
     def hasErrors(self) -> bool:
         """Check if any errors occurred"""

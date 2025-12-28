@@ -13,21 +13,12 @@ logger = logging.getLogger(__name__)
 class BatchSyncScheduler:
     
     @staticmethod
-    def execute() -> Dict[str, any]:
-        """
-        Sync missing batch records using single optimized INSERT query.
-        
-        Returns:
-            Execution statistics
-        """
-        logger.info("BATCH_SYNC_SCHEDULER :: Started")
+    def addMissingInitialBatchRecords() -> Dict[str, any]:
+        logger.info("POSITION_UPDATES_SCHEDULER :: Started adding missing initial batch records")
         
         with transaction.atomic():
             batchesCreated = BatchPersistenceHandler.createMissingBatchesForOpenPositions()
             
-            logger.info(
-                "BATCH_SYNC_SCHEDULER :: Completed | Created: %d batches", 
-                batchesCreated
-            )
+            logger.info("POSITION_UPDATES_SCHEDULER :: Completed | Created: %d batches", batchesCreated)
             
             return {'success': True, 'batchesCreated': batchesCreated}

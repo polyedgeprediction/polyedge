@@ -129,7 +129,7 @@ class PositionPersistenceHandler:
         
         # Single bulk update at the end
         if positionsToUpdate:
-            PositionPersistenceHandler._bulkUpdatePositions(positionsToUpdate)
+            PositionPersistenceHandler.updatePositions(positionsToUpdate)
         
         return result
 
@@ -305,7 +305,7 @@ class PositionPersistenceHandler:
         dbPosition.amountremaining = Decimal(str(apiPosition.currentValue or 0))
 
     @staticmethod
-    def _bulkUpdatePositions(positionsToUpdate: List[PositionModel]) -> None:
+    def updatePositions(positionsToUpdate: List[PositionModel]) -> None:
         """Perform bulk update on positions"""
         PositionModel.objects.bulk_update(
             positionsToUpdate,
@@ -428,6 +428,6 @@ class PositionPersistenceHandler:
                 positionsToUpdate.append(position)
         
         if positionsToUpdate:
-            PositionPersistenceHandler._bulkUpdatePositions(positionsToUpdate)
+            PositionPersistenceHandler.updatePositions(positionsToUpdate)
         
         return len(positionsToUpdate)

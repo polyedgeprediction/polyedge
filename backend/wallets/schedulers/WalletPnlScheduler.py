@@ -116,8 +116,7 @@ class WalletPnlScheduler:
             connection.close()
 
     @transaction.atomic
-    def persistPnlData(self, wallet: Wallet, periodDays: int,
-                       result: PnlCalculationResult) -> None:
+    def persistPnlData(self, wallet: Wallet, periodDays: int,result: PnlCalculationResult) -> None:
         WalletPnl.objects.update_or_create(
             wallet=wallet,
             period=periodDays,
