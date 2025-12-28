@@ -61,8 +61,7 @@ class PnlCalculationService:
         cutoffDateTime = datetime.combine(cutoffDate, datetime.min.time()).replace(tzinfo=timezone.utc)
         cutoffTimestamp = int(cutoffDateTime.timestamp())
 
-        logger.info("PNL_SCHEDULER :: Starting calculation | Wallet: %s | Period: %d days",
-                   wallet.proxywallet[:10], periodDays)
+        logger.info("PNL_SCHEDULER :: Starting calculation | Wallet: %s | Period: %d days",wallet.proxywallet[:10], periodDays)
 
         # Query all positions for wallet
         positions = list(Position.objects.filter(
@@ -79,8 +78,7 @@ class PnlCalculationService:
         # Calculate using core logic
         return self._calculatePnlCore(wallet, periodDays, positions, marketsWithRecentTrades, cutoffTimestamp, now)
 
-    def calculatePnlFromBulkData(self, wallet: Wallet, periodDays: int,
-                                 eventHierarchy: Dict[str, Event], startTime: datetime) -> PnlCalculationResult:
+    def calculatePnlFromBulkData(self, wallet: Wallet, periodDays: int,eventHierarchy: Dict[str, Event], startTime: datetime) -> PnlCalculationResult:
         # Get date N days ago and set to start of day (00:00:00)
         cutoffDate = (startTime - timedelta(days=periodDays)).date()
         cutoffDateTime = datetime.combine(cutoffDate, datetime.min.time()).replace(tzinfo=timezone.utc)

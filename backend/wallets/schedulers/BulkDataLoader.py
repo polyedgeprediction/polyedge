@@ -129,7 +129,7 @@ class BulkDataLoader:
                               AND t.walletsid = p.walletsid
                               AND t.tradedate >= %s
             WHERE p.walletsid IN %s
-            ORDER BY t.tradedate
+            ORDER BY p.walletsid, m.marketsid, p.positionid, t.tradedate
         """
 
         with connection.cursor() as cursor:
