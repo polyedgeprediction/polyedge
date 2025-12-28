@@ -107,7 +107,7 @@ class PositionUpdatesScheduler:
         apiOpenPositions = self.openPositionAPI.fetchOpenPositions(wallet.proxywallet)
 
         # Update positions in database
-        result = PositionPersistenceHandler.updatePositionsForWallet(wallet.walletsid,apiOpenPositions)
+        result = PositionPersistenceHandler.updatePositionsForWallet(wallet,apiOpenPositions)
 
         # Convert result to wallet stats
         return result.toWalletStats(wallet.walletsid, wallet.proxywallet)

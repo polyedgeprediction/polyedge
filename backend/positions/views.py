@@ -38,7 +38,7 @@ def updateRecentlyClosedPositions(request):
         logger.info("Recently closed positions update API endpoint called")
         
         # Execute recently closed positions update
-        RecentlyClosedPositionsScheduler.execute()
+        RecentlyClosedPositionsScheduler.updatePNLDataForRecentlyClosedPositions()
         
         logger.info("Recently closed positions update completed successfully")
         return Response(

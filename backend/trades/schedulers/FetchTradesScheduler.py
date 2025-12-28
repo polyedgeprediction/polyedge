@@ -13,7 +13,7 @@ from positions.enums.TradeStatus import TradeStatus
 logger = logging.getLogger(__name__)
 
 
-class TradeProcessingScheduler:
+class FetchTradesScheduler:
     
     @staticmethod
     def fetchTrades() -> None:
@@ -28,7 +28,7 @@ class TradeProcessingScheduler:
                 TradeProcessingService.syncTradeForWallets(walletsWithMarkets,TradeStatus.NEED_TO_PULL_TRADES, TradeStatus.TRADES_SYNCED)
                 
             TradePersistenceHandler.bulkUpdatePNL(TradeStatus.NEED_TO_CALCULATE_PNL, TradeStatus.TRADES_SYNCED)
-            TradeProcessingScheduler.updateRecentlyClosedPositions()
+            FetchTradesScheduler.updateRecentlyClosedPositionsWithPNLData()
 
             logger.info("FETCH_TRADES_SCHEDULER :: Completed")
         except Exception as e:
@@ -36,10 +36,10 @@ class TradeProcessingScheduler:
             return
 
     @staticmethod
-    def updateRecentlyClosedPositions():
+    def updateRecentlyClosedPositionsWithPNLData():
         try:
             logger.info("FETCH_TRADES_SCHEDULER :: Started updating recently closed positions")
-            RecentlyClosedPositionsScheduler.execute()
+            RecentlyClosedPositionsScheduler.updatePNLDataForRecentlyClosedPositions()
             logger.info("FETCH_TRADES_SCHEDULER :: Completed updating recently closed positions")
         except Exception as e:
             logger.error(f"FETCH_TRADES_SCHEDULER :: Critical error: {e}")

@@ -16,6 +16,10 @@ from positions.pojos.Position import Position as PositionPojo
 from wallets.models import Wallet
 from markets.models import Market
 from events.pojos.Event import Event
+from wallets.smartwalletdiscovery.WalletEvaluvationService import WalletEvaluvationService
+from django.db import connection
+from typing import Dict, List, Tuple
+from wallets.services.WalletPersistenceService import WalletPersistenceService
 
 
 class PositionPersistenceHandler:
@@ -67,7 +71,7 @@ class PositionPersistenceHandler:
             )
 
     @staticmethod
-    def updatePositionsForWallet(walletId: int, apiOpenPositions: List[PolymarketPositionResponse]) -> PositionUpdateResult:
+    def updatePositionsForWallet(wallet: Wallet, openPositionsFromAPI: List[PolymarketPositionResponse]) -> PositionUpdateResult:
         """
         Update all positions for a wallet efficiently with single API fetch, single DB fetch, and single bulk update.
         
@@ -94,49 +98,50 @@ class PositionPersistenceHandler:
         → Requires market lookup/creation if market doesn't exist
         """
         # Fetch current open positions once
-        currentOpenPositions = list(PositionModel.objects.filter(
-            walletsid=walletId,
+        openPositionsFromDB = list(PositionModel.objects.filter(
+            walletsid=wallet.walletsid,
             positionstatus=PositionStatus.OPEN
         ).select_related('marketsid'))
         
         # Create lookup maps
-        apiPositionMap = PositionPersistenceHandler._createAPIPositionMap(apiOpenPositions)
-        dbOpenPositionMap = PositionPersistenceHandler._createDBPositionMap(currentOpenPositions)
+        openPositionsFromAPIMap = PositionPersistenceHandler.createAPIPositionMap(openPositionsFromAPI)
+        openPositionsFromDBMap = PositionPersistenceHandler.createDBPositionMap(openPositionsFromDB)
         
-        result = PositionUpdateResult()
+        positionsUpdateResult = PositionUpdateResult()
         positionsToUpdate = []
         
         # Case 1: Update existing open positions
-        result.updated = PositionPersistenceHandler.processExsistingOpenPositions(
-            dbOpenPositionMap, apiPositionMap, positionsToUpdate
+        positionsUpdateResult.updated = PositionPersistenceHandler.processExsistingOpenPositions(
+            openPositionsFromDBMap, openPositionsFromAPIMap, positionsToUpdate
         )
         
         # Case 2: Mark positions as closed
-        result.markedClosed = PositionPersistenceHandler.processClosedPositions(
-            dbOpenPositionMap, apiPositionMap, positionsToUpdate
+        positionsUpdateResult.markedClosed = PositionPersistenceHandler.processClosedPositions(
+            openPositionsFromDBMap, openPositionsFromAPIMap, positionsToUpdate
         )
         
-        # Case 3 & 4: Handle positions in API but not in current open positions
-        apiKeysNotInOpen = set(apiPositionMap.keys()) - set(dbOpenPositionMap.keys())
-        if apiKeysNotInOpen:
-            result.reopened = PositionPersistenceHandler.processReopenedPositions(
-                walletId, apiKeysNotInOpen, apiPositionMap, positionsToUpdate
+        # Case 3 & 4: Handle positions in API but not in open positions from DB 
+        positionsOpenInAPINotInDB = set(openPositionsFromAPIMap.keys()) - set(openPositionsFromDBMap.keys())
+        if positionsOpenInAPINotInDB:
+            # Case 3: open in api but closed in db
+            positionsUpdateResult.reopened, closedPositionsFromDBMap = PositionPersistenceHandler.processReopenedPositions(
+                wallet, positionsOpenInAPINotInDB, openPositionsFromAPIMap, positionsToUpdate
             )
             
-            result.created = PositionPersistenceHandler.processNewPositions(
-                walletId, apiKeysNotInOpen, apiPositionMap
+            positionsUpdateResult.created, eventHierarchy = PositionPersistenceHandler.processNewPositions(
+                wallet, positionsOpenInAPINotInDB, openPositionsFromAPIMap, closedPositionsFromDBMap
             )
         
         # Single bulk update at the end
         if positionsToUpdate:
             PositionPersistenceHandler.updatePositions(positionsToUpdate)
-        
-        return result
+        if positionsUpdateResult.created != 0:
+            PositionPersistenceHandler.persitNewPositions(wallet, eventHierarchy)
+
+        return positionsUpdateResult
 
     @staticmethod
-    def processExsistingOpenPositions(dbOpenPositionMap: Dict[str, PositionModel], 
-                                apiPositionMap: Dict[str, PolymarketPositionResponse],
-                                positionsToUpdate: List[PositionModel]) -> int:
+    def processExsistingOpenPositions(dbOpenPositionMap: Dict[str, PositionModel], apiPositionMap: Dict[str, PolymarketPositionResponse],positionsToUpdate: List[PositionModel]) -> int:
         """
         Case 1: Position in API + Open in DB → Smart update based on change type
         """
@@ -164,99 +169,87 @@ class PositionPersistenceHandler:
         return updatedCount
 
     @staticmethod
-    def processClosedPositions(dbOpenPositionMap: Dict[str, PositionModel],
-                              apiPositionMap: Dict[str, PolymarketPositionResponse],
+    def processClosedPositions(openPositionsFromDB: Dict[str, PositionModel],
+                              openPositionsFromAPI: Dict[str, PolymarketPositionResponse],
                               positionsToUpdate: List[PositionModel]) -> int:
         """
         Case 2: Position not in API + Open in DB → Set POSITION_CLOSED_NEED_DATA
         """
-        # Efficiently find positions that are closed (in DB but not in API)
-        closedPositionKeys = set(dbOpenPositionMap.keys()) - set(apiPositionMap.keys())
+        # Efficiently find positions that are closed (in DB but not in API) - open in db but not in api
+        recentlyClosedPositionKeys = set(openPositionsFromDB.keys()) - set(openPositionsFromAPI.keys())
         
         # Only iterate over positions that are actually closed
-        for key in closedPositionKeys:
-            dbPosition = dbOpenPositionMap[key]
+        for key in recentlyClosedPositionKeys:
+            dbPosition = openPositionsFromDB[key]
             dbPosition.tradestatus = TradeStatus.NEED_TO_PULL_TRADES
-            dbPosition.positionstatus = PositionStatus.CLOSED_NEED_DATA
+            dbPosition.positionstatus = PositionStatus.CLOSED_NEED_DATA 
             dbPosition.lastupdatedat = timezone.now()
             positionsToUpdate.append(dbPosition)
         
-        return len(closedPositionKeys)
+        return len(recentlyClosedPositionKeys)
 
     @staticmethod
-    def processReopenedPositions(walletId: int, 
-                                apiKeysNotInOpen: Set[str],
-                                apiPositionMap: Dict[str, PolymarketPositionResponse],
-                                positionsToUpdate: List[PositionModel]) -> int:
+    def processReopenedPositions(wallet: Wallet, 
+                                positionsOpenInAPINotInDB: Set[str],
+                                openPositionsFromAPIMap: Dict[str, PolymarketPositionResponse],
+                                positionsToUpdate: List[PositionModel]) -> Tuple[int, Dict[str, PositionModel]]:
         """
         Case 3: Position in API + Closed in DB → Reopen, set NEED_TO_PULL_TRADES
         """
-        if not apiKeysNotInOpen:
+        if not positionsOpenInAPINotInDB:
             return 0
             
         # Only fetch closed positions if we have potential reopenings
-        closedPositions = list(PositionModel.objects.filter(
-            walletsid=walletId,
+        closedPositionsFromDB = list(PositionModel.objects.filter(
+            walletsid=wallet.walletsid,
             positionstatus=PositionStatus.CLOSED
         ))
         
-        closedPositionMap = PositionPersistenceHandler._createDBPositionMap(closedPositions)
+        closedPositionFromDBMap = PositionPersistenceHandler.createDBPositionMap(closedPositionsFromDB)
         reopenedCount = 0
         
-        for key in apiKeysNotInOpen:
-            if key in closedPositionMap:
-                closedPosition = closedPositionMap[key]
-                apiPosition = apiPositionMap[key]
+        for key in positionsOpenInAPINotInDB:
+            if key in closedPositionFromDBMap:
+                closedPositionFromDB = closedPositionFromDBMap[key]
+                openPositionFromAPI = openPositionsFromAPIMap[key]
                 
                 # Update closed position to open status
-                PositionPersistenceHandler.updatePositionsFromAPI(closedPosition, apiPosition)
-                closedPosition.positionstatus = PositionStatus.OPEN
-                closedPosition.tradestatus = TradeStatus.NEED_TO_PULL_TRADES
-                closedPosition.lastupdatedat = timezone.now()
-                positionsToUpdate.append(closedPosition)
+                PositionPersistenceHandler.updatePositionsFromAPI(closedPositionFromDB, openPositionFromAPI)
+                closedPositionFromDB.positionstatus = PositionStatus.OPEN
+                closedPositionFromDB.tradestatus = TradeStatus.NEED_TO_PULL_TRADES
+                closedPositionFromDB.lastupdatedat = timezone.now()
+                positionsToUpdate.append(closedPositionFromDB)
                 reopenedCount += 1
         
-        return reopenedCount
+        return reopenedCount,closedPositionFromDBMap
 
     @staticmethod
-    def processNewPositions(walletId: int,
-                           apiKeysNotInOpen: Set[str], 
-                           apiPositionMap: Dict[str, PolymarketPositionResponse]) -> int:
+    def processNewPositions(wallet: Wallet,positionsOpenInAPINotInDB: Set[str],openPositionsFromAPIMap: Dict[str, PolymarketPositionResponse], closedPositionsFromDBMap: Dict[str, PositionModel]) -> Tuple[int, Dict[str, Event]]:
         """
         Case 4: Position in API but does NOT exist in DB → Create new position
-        Follows exact same pattern as FetchNewWalletPositionsScheduler
         """
-        if not apiKeysNotInOpen:
+        if not positionsOpenInAPINotInDB:
             return 0
-            
-        # Find positions that don't exist in database at all
-        allExistingPositions = list(PositionModel.objects.filter(walletsid=walletId))
-        existingPositionMap = PositionPersistenceHandler._createDBPositionMap(allExistingPositions)
         
-        newPositionKeys = [key for key in apiKeysNotInOpen if key not in existingPositionMap]
+        #we have already checked for positions where its not available in api but is in db[that means its closed]
+        #and when we check for positions where its available in api but not in db, there are only two options:
+        #1. closed position that was reopened - we already checked that with the existing case 3
+        #2. new position that was opened - so we just need to check whether the position that is in API and not in db is not a already closed position
+        newlyOpenedPositionsKeys = [key for key in positionsOpenInAPINotInDB if key not in closedPositionsFromDBMap]
         
-        if not newPositionKeys:
+        if not newlyOpenedPositionsKeys:
             return 0
         
         # Extract new API positions
-        newApiPositions = [apiPositionMap[key] for key in newPositionKeys]
-        
-        # Follow exact FetchNewWalletPositionsScheduler pattern:
-        # 1. buildEvent() - converts API positions to Event POJOs
-        # 2. persistEvent() - handles Event→Market→Position creation
-        from positions.schedulers.FetchNewWalletPositionsScheduler import FetchNewWalletPositionsScheduler
-        scheduler = FetchNewWalletPositionsScheduler()
-        
-        newEvents = scheduler.buildEvent(newApiPositions)
-        
-        if newEvents:
-            wallet = Wallet.objects.get(walletsid=walletId)
-            scheduler.persistEvent(wallet, newEvents)
-        
-        return len(newPositionKeys)
+        newlyOpenedPositionsFromAPIData = [openPositionsFromAPIMap[key] for key in newlyOpenedPositionsKeys]
+
+        # Use WalletEvaluvationService's buildEventHierarchy method
+        evaluationService = WalletEvaluvationService()
+        eventHierarchy = evaluationService.buildEventHierarchy(newlyOpenedPositionsFromAPIData, closedPositions=[])
+        return len(newlyOpenedPositionsKeys), eventHierarchy
 
     @staticmethod
-    def _createAPIPositionMap(openPositions: List[PolymarketPositionResponse]) -> Dict[str, PolymarketPositionResponse]:
+    def createAPIPositionMap(openPositions: List[PolymarketPositionResponse]) -> Dict[str, PolymarketPositionResponse]:
         """Create lookup map: conditionId+outcome -> PolymarketPositionResponse"""
         apiMap = {}
         for position in openPositions:
@@ -265,7 +258,7 @@ class PositionPersistenceHandler:
         return apiMap
 
     @staticmethod
-    def _createDBPositionMap(dbPositions: List[PositionModel]) -> Dict[str, PositionModel]:
+    def createDBPositionMap(dbPositions: List[PositionModel]) -> Dict[str, PositionModel]:
         """Create lookup map: conditionId+outcome -> Position model"""
         dbMap = {}
         for position in dbPositions:
@@ -326,7 +319,6 @@ class PositionPersistenceHandler:
             Dict mapping "proxywallet_conditionid_outcome" -> (positionId, PositionPojo)
             Example: "0xabc123_0xdef456_Yes" -> (123, PositionPojo(...))
         """
-        from django.db import connection
         
         query = """
             SELECT 
@@ -431,3 +423,11 @@ class PositionPersistenceHandler:
             PositionPersistenceHandler.updatePositions(positionsToUpdate)
         
         return len(positionsToUpdate)
+
+
+
+    @staticmethod
+    def persitNewPositions(wallet: Wallet, eventHierarchy: Dict[str, Event]) -> None:
+        eventLookup = WalletPersistenceService.persistEvents(eventHierarchy)
+        marketLookup = WalletPersistenceService.persistMarkets(eventHierarchy, eventLookup)
+        WalletPersistenceService.persistPositions(wallet, eventHierarchy, marketLookup)

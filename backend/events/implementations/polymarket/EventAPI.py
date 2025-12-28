@@ -13,7 +13,8 @@ from events.implementations.polymarket.Constants import (
     DEFAULT_RETRY_DELAY_SECONDS
 )
 from events.pojos.PolymarketEventResponse import PolymarketEventResponse
-from framework.rateLimiting import RateLimitedRequestHandler, RateLimiterType
+from framework.RateLimitedRequestHandler import RateLimitedRequestHandler
+from framework.RateLimiterType import RateLimiterType
 
 logger = logging.getLogger(__name__)
 

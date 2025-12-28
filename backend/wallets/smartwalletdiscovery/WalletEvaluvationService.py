@@ -119,7 +119,7 @@ class WalletEvaluvationService:
         closedPositions = self.closedPositionAPI.fetchClosedPositions(walletAddress, candidateNumber)
         return openPositions, closedPositions
 
-    def buildEventHierarchy(self,openPositions: List[PolymarketPositionResponse],closedPositions: List[PolymarketPositionResponse], candidateNumber: int) -> Dict[str, Event]:
+    def buildEventHierarchy(self,openPositions: List[PolymarketPositionResponse],closedPositions: List[PolymarketPositionResponse]=None, candidateNumber: int=None) -> Dict[str, Event]:
         """
         Build Event → Market → Position hierarchy from API responses.
         Groups positions by event slug and market condition ID.
