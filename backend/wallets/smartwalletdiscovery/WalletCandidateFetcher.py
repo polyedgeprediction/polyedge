@@ -1,5 +1,6 @@
 """
 Fetches candidate wallets from Polymarket leaderboard using period='all'.
+Filters out blacklisted wallets during discovery process.
 """
 import logging
 import time
@@ -13,6 +14,7 @@ from wallets.implementations.polymarket.Constants import (
     POLYMARKET_HEADERS,
     SMART_MONEY_CATEGORIES
 )
+from wallets.smartwalletdiscovery.Constants import isWalletBlacklisted
 from framework.RateLimitedRequestHandler import RateLimitedRequestHandler
 from framework.RateLimiterType import RateLimiterType
 
@@ -80,6 +82,11 @@ class WalletCandidateFetcher:
                         break
 
                     walletAddress = walletData['proxyWallet']
+
+                    # Skip blacklisted wallets
+                    if isWalletBlacklisted(walletAddress):
+                        logger.info("SMART_WALLET_DISCOVERY :: Wallet blacklisted, skipping | Wallet: %s", walletAddress[:10])
+                        continue
 
                     if walletAddress in seenWallets:
                         # Wallet seen in another category - append category

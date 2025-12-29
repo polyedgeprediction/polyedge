@@ -61,6 +61,7 @@ class WalletEvaluvationService:
         logger.info("SMART_WALLET_DISCOVERY :: Starting evaluation | Wallet: %s - #%d", walletAddress[:10], candidate.number)
 
         try:
+            # Step 0: See if the candidate is blacklisted
             # Step 1: Fetch all positions
             openPositions, closedPositions = self.fetchPositions(walletAddress, candidate.number)
             logger.info("SMART_WALLET_DISCOVERY :: Positions fetched | Open: %d | Closed: %d | Wallet: %s  - #%d",len(openPositions), len(closedPositions), walletAddress[:10], candidate.number)
