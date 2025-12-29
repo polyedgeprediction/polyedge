@@ -197,7 +197,7 @@ class PositionPersistenceHandler:
         Case 3: Position in API + Closed in DB → Reopen, set NEED_TO_PULL_TRADES
         """
         if not positionsOpenInAPINotInDB:
-            return 0
+            return 0,{}
             
         # Only fetch closed positions if we have potential reopenings
         closedPositionsFromDB = list(PositionModel.objects.filter(
@@ -229,7 +229,7 @@ class PositionPersistenceHandler:
         Case 4: Position in API but does NOT exist in DB → Create new position
         """
         if not positionsOpenInAPINotInDB:
-            return 0
+            return 0,{}
         
         #we have already checked for positions where its not available in api but is in db[that means its closed]
         #and when we check for positions where its available in api but not in db, there are only two options:
@@ -238,7 +238,7 @@ class PositionPersistenceHandler:
         newlyOpenedPositionsKeys = [key for key in positionsOpenInAPINotInDB if key not in closedPositionsFromDBMap]
         
         if not newlyOpenedPositionsKeys:
-            return 0
+            return 0,{}
         
         # Extract new API positions
         newlyOpenedPositionsFromAPIData = [openPositionsFromAPIMap[key] for key in newlyOpenedPositionsKeys]
