@@ -22,4 +22,5 @@ urlpatterns = [
     path('api/smartwallets/', include('wallets.urls')),
     path('api/positions/', include('positions.urls')),
     path('api/trades/', include('trades.urls')),
+    path('api/events/', include('events.urls')),
 ]

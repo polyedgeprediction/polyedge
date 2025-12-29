@@ -8,7 +8,7 @@ from positions.schedulers.PositionUpdatesScheduler import PositionUpdatesSchedul
 logger = logging.getLogger(__name__)
 
 
-def updateExistingPositions():
+def   updateExistingPositions():
     try:
         result = PositionUpdatesScheduler.updatePositions()
         

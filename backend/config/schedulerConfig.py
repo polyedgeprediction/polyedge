@@ -157,18 +157,8 @@ def _registerPositionJobs(scheduler):
     FIRST PRINCIPLE: Single Responsibility
     Register all position-related scheduled jobs.
     """
-    from positions.schedulers.jobs import fetchNewWalletPositions, updateExistingPositions
-    
-    # Job: Fetch positions for new wallets
-    # FIRST PRINCIPLE: Explicit scheduling
-    _registerJob(
-        scheduler=scheduler,
-        job_id='fetch_new_wallet_positions',
-        func=fetchNewWalletPositions,
-        trigger_type='interval',
-        hours=2  # Run every 2 hours
-    )
-    
+    from positions.schedulers.jobs import updateExistingPositions
+
     # Job: Update existing positions
     # FIRST PRINCIPLE: Different jobs can have different schedules
     _registerJob(
@@ -194,7 +184,7 @@ def _registerEventJobs(scheduler):
     _registerJob(
         scheduler=scheduler,
         job_id='update_events_and_markets',
-        func=UpdateEventsAndMarketsScheduler.execute,
+        func=UpdateEventsAndMarketsScheduler.fetchAllMarketDetails,
         trigger_type='interval',
         hours=10  # Run every 10 hours
     )

@@ -1,11 +1,16 @@
 """
 Polymarket trade processing service with real-time aggregation.
 Clean pipeline: API → Parse → Aggregate → Persist
+Parallel processing for efficient wallet-level trade fetching.
 """
 from typing import List, Optional
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from django.db import connection
 
 from wallets.pojos.WalletWithMarkets import WalletWithMarkets
+from wallets.Constants import PARALLEL_TRADE_WORKERS
 from markets.pojos.Market import Market
 from trades.pojos.AggregatedTrade import AggregatedTrade
 from trades.pojos.DailyTrades import DailyTrades
@@ -20,74 +25,138 @@ logger = logging.getLogger(__name__)
 class TradeProcessingService:
     """
     Polymarket trade processing service with real-time aggregation.
-    
+
     Processes wallet trades through a clean pipeline:
     API → Parse → Aggregate → Persist
     """
-    
+
+    def __init__(self):
+        """Initialize with PolymarketAPIService instance."""
+        self.apiService = PolymarketAPIService()
+
     @staticmethod
     def syncTradeForWallets(wallets: List[WalletWithMarkets], fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> None:
-        """Process trades for all wallets with bulk persistence at the end."""
-        for wallet in wallets:
-            try:
-                TradeProcessingService.syncTradeForWallet(wallet, fallbackStatus,finalStatus)
-            except Exception as e:
-                logger.info(f"FETCH_TRADES_SCHEDULER :: Failed to process wallet {wallet.walletId}: {e}")
-        
+        if not wallets:
+            logger.info("FETCH_TRADES_SCHEDULER :: No wallets to process")
+            return
+
+        logger.info("FETCH_TRADES_SCHEDULER :: Started parallel processing | Wallets: %d | Workers: %d",len(wallets),PARALLEL_TRADE_WORKERS)
+
+        # Process wallets in parallel
+        walletsSucceeded, walletsFailed = TradeProcessingService.processWalletsInParallel(wallets, fallbackStatus, finalStatus)
+
+        logger.info("FETCH_TRADES_SCHEDULER :: Parallel processing completed | Success: %d | Failed: %d",walletsSucceeded,walletsFailed)
+
         # Single bulk persistence call for all wallets
-        TradeProcessingService.persistAggregatedTrades(wallets,finalStatus)
+        TradeProcessingService.persistAggregatedTrades(wallets, finalStatus)
 
-
-    
     @staticmethod
-    def syncTradeForWallet(wallet: WalletWithMarkets,fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> None:
-        """Process all markets for a single wallet."""
+    def processWalletsInParallel(wallets: List[WalletWithMarkets], fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> tuple:
+        walletsSucceeded = 0
+        walletsFailed = 0
+        statsLock = threading.Lock()
+
+        with ThreadPoolExecutor(max_workers=PARALLEL_TRADE_WORKERS) as executor:
+            # Submit all wallet processing tasks
+            futures = {
+                executor.submit(
+                    TradeProcessingService.processSingleWallet,
+                    wallet,
+                    fallbackStatus,
+                    finalStatus
+                ): wallet
+                for wallet in wallets
+            }
+
+            # Process completed tasks as they finish
+            for future in as_completed(futures):
+                wallet = futures[future]
+                try:
+                    success = future.result()
+
+                    with statsLock:
+                        if success:
+                            walletsSucceeded += 1
+                        else:
+                            walletsFailed += 1
+
+                except Exception as e:
+                    with statsLock:
+                        walletsFailed += 1
+                    logger.error(
+                        "FETCH_TRADES_SCHEDULER :: Unexpected error | Wallet: %d | Error: %s",
+                        wallet.walletId,
+                        str(e),
+                        exc_info=True
+                    )
+
+        return walletsSucceeded, walletsFailed
+
+    @staticmethod
+    def processSingleWallet(wallet: WalletWithMarkets, fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> bool:
+        try:
+            # Create service instance for this thread
+            service = TradeProcessingService()
+
+            # Process all markets for this wallet
+            service.syncTradeForWallet(wallet, fallbackStatus, finalStatus)
+
+            logger.info("FETCH_TRADES_SCHEDULER :: Wallet processed | Wallet: %d | Markets: %d",wallet.walletId,len(wallet.markets))
+
+            return True
+
+        except Exception as e:
+            logger.info("FETCH_TRADES_SCHEDULER :: Failed to process wallet | Wallet: %d | Error: %s",wallet.walletId,str(e),exc_info=True)
+            return False
+
+        finally:
+            # Close database connection for this thread to prevent connection exhaustion
+            connection.close()
+
+
+    def syncTradeForWallet(self, wallet: WalletWithMarkets, fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> None:
         for market in wallet.markets.values():
             try:
-                TradeProcessingService.syncTradeForMarket(wallet, market, fallbackStatus,finalStatus)
+                self.syncTradeForMarket(wallet, market, fallbackStatus, finalStatus)
             except Exception as e:
-                logger.info(f"FETCH_TRADES_SCHEDULER :: Failed to process market {market.conditionId} for wallet {wallet.walletId}: {e}")
+                logger.info(f"FETCH_TRADES_SCHEDULER :: Failed to process market {market.marketSlug} for wallet {wallet.walletId}: {e}")
                 market.markTradeStatus(fallbackStatus)
-    
-    @staticmethod
-    def syncTradeForMarket(wallet: WalletWithMarkets, market: Market, fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> None:
-        """Process trades for a single market with real-time aggregation."""
+
+    def syncTradeForMarket(self, wallet: WalletWithMarkets, market: Market, fallbackStatus: TradeStatus, finalStatus: TradeStatus) -> None:
         # Step 1: Fetch trades from API with latest timestamp
-        tradesFromAPI, latestTimestamp = TradeProcessingService.fetchTrades(wallet, market)
-        
+        tradesFromAPI, latestTimestamp = self.fetchTrades(wallet, market)
+
         # Step 2: Check for API errors before processing
 
         if PolyMarketUserActivityResponse.hasApiErrors(tradesFromAPI):
             errorCode, errorMessage = PolyMarketUserActivityResponse.getFirstError(tradesFromAPI)
-            logger.info(f"FETCH_TRADES_SCHEDULER :: API errors for market {market.conditionId}: {errorCode} - {errorMessage}")
+            logger.info(f"FETCH_TRADES_SCHEDULER :: API errors for market {market.marketSlug}: {errorCode} - {errorMessage}")
             market.markTradeStatus(fallbackStatus)
             return
 
         if not tradesFromAPI:
             market.markTradeStatus(finalStatus)
             return
-            
+
         # Step 3: Process trades with real-time aggregation
         TradeProcessingService.aggregateTrades(wallet, market, tradesFromAPI)
-        
+
         # Step 4: Prepare for bulk persistence
         TradeProcessingService.updateAggregatedTradeData(wallet, market, latestTimestamp)
-        
+
         # Step 5: Mark for PNL calculation
         market.markTradeStatus(TradeStatus.NEED_TO_CALCULATE_PNL)
-        
-        logger.info(f"Processed market {market.conditionId}: {len(tradesFromAPI)} transactions")
-    
-    @staticmethod
-    def fetchTrades(wallet: WalletWithMarkets, market: Market) -> tuple[List[PolyMarketUserActivityResponse], Optional[int]]:
-        """Fetch trades from Polymarket API based on sync requirements."""
+
+        logger.info(f"Processed market {market.marketSlug}: {len(tradesFromAPI)} transactions")
+
+    def fetchTrades(self, wallet: WalletWithMarkets, market: Market) -> tuple[List[PolyMarketUserActivityResponse], Optional[int]]:
         if market.needsTradeSync():
-            return PolymarketAPIService.fetchAllTrades(wallet.proxyWallet, market.conditionId)
+            return self.apiService.fetchAllTrades(wallet.proxyWallet, market.conditionId)
         else:
             startTimestamp = market.batch.getLastFetchedTimestamp() if market.batch else None
-            return PolymarketAPIService.fetchTradesInRange(
+            return self.apiService.fetchTradesInRange(
                 wallet.proxyWallet,
-                market.conditionId, 
+                market.conditionId,
                 startTimestamp,
                 PolymarketAPIService.getCurrentTimestamp()
             )

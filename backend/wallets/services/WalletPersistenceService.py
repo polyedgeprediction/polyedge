@@ -341,7 +341,7 @@ class WalletPersistenceService:
             return None
 
     @staticmethod
-    def persistEvents(eventHierarchy: Dict[str, Event], candidateNumber: int) -> Dict[str, EventModel]:
+    def persistEvents(eventHierarchy: Dict[str, Event], candidateNumber: int=None) -> Dict[str, EventModel]:
         """
         Persist all events using bulk upsert.
         1. Bulk create/update all events (1 query)
@@ -389,11 +389,14 @@ class WalletPersistenceService:
         allEvents = EventModel.objects.filter(eventslug__in=eventSlugs).all()
         eventLookup = {event.eventslug: event for event in allEvents}
 
-        logger.info("SMART_WALLET_DISCOVERY :: Events lookup built: %d - #%d", len(eventLookup), candidateNumber)
+        if candidateNumber is not None:
+            logger.info("SMART_WALLET_DISCOVERY :: Events lookup: %d | Candidate #%d", len(eventLookup), candidateNumber)
+        else:
+            logger.info("SMART_WALLET_DISCOVERY :: Events lookup: %d", len(eventLookup))
         return eventLookup
 
     @staticmethod
-    def persistMarkets(eventHierarchy: Dict[str, Event],eventLookup: Dict[str, EventModel], candidateNumber: int) -> Dict[str, MarketModel]:
+    def persistMarkets(eventHierarchy: Dict[str, Event],eventLookup: Dict[str, EventModel], candidateNumber: int=None) -> Dict[str, MarketModel]:
         """
         Persist all markets using bulk upsert.
         1. Bulk create/update all markets (1 query)
@@ -450,11 +453,14 @@ class WalletPersistenceService:
         allMarkets = MarketModel.objects.filter(platformmarketid__in=allConditionIds).all()
         marketLookup = {market.platformmarketid: market for market in allMarkets}
 
-        logger.info("SMART_WALLET_DISCOVERY :: Markets lookup built: %d - #%d", len(marketLookup), candidateNumber)
+        if candidateNumber is not None:
+            logger.info("SMART_WALLET_DISCOVERY :: Markets lookup: %d | Candidate #%d", len(marketLookup), candidateNumber)
+        else:
+            logger.info("SMART_WALLET_DISCOVERY :: Markets lookup: %d", len(marketLookup))
         return marketLookup
 
     @staticmethod
-    def persistPositions(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel], candidateNumber: int) -> None:
+    def persistPositions(wallet: Wallet,eventHierarchy: Dict[str, Event],marketLookup: Dict[str, MarketModel], candidateNumber: int=None) -> None:
         """Persist all positions with proper foreign keys."""
         positionsToCreate = []
 
@@ -462,7 +468,10 @@ class WalletPersistenceService:
             for conditionId, market in event.markets.items():
                 marketModel = marketLookup.get(conditionId)
                 if not marketModel:
-                    logger.warning("SMART_WALLET_DISCOVERY :: No market model for: %s - #%d", conditionId[:10], candidateNumber)
+                    if candidateNumber is not None:
+                        logger.warning("SMART_WALLET_DISCOVERY :: No market model: %s | Candidate #%d", conditionId[:10], candidateNumber)
+                    else:
+                        logger.warning("SMART_WALLET_DISCOVERY :: No market model: %s", conditionId[:10])
                     continue
 
                 for position in market.positions:
@@ -473,7 +482,10 @@ class WalletPersistenceService:
         # Bulk create positions
         if positionsToCreate:
             PositionModel.objects.bulk_create(positionsToCreate, ignore_conflicts=True)
-            logger.info("SMART_WALLET_DISCOVERY :: Positions created: %d | Wallet: %s - #%d",len(positionsToCreate), wallet.proxywallet[:10], candidateNumber)
+            if candidateNumber is not None:
+                logger.info("SMART_WALLET_DISCOVERY :: Positions created: %d | %s | Candidate #%d", len(positionsToCreate), wallet.proxywallet[:10], candidateNumber)
+            else:
+                logger.info("SMART_WALLET_DISCOVERY :: Positions created: %d | %s", len(positionsToCreate), wallet.proxywallet[:10])
 
     @staticmethod
     def createPositionObject(wallet: Wallet,marketModel: MarketModel,position: Position, candidateNumber: int) -> Optional[PositionModel]:
@@ -508,7 +520,10 @@ class WalletPersistenceService:
             )
 
         except Exception as e:
-            logger.info("SMART_WALLET_DISCOVERY :: Failed to create position object: %s - #%d", str(e), candidateNumber)
+            if candidateNumber is not None:
+                logger.info("SMART_WALLET_DISCOVERY :: Failed to create position: %s | Candidate #%d", str(e), candidateNumber)
+            else:
+                logger.info("SMART_WALLET_DISCOVERY :: Failed to create position: %s", str(e))
             return None
 
     @staticmethod

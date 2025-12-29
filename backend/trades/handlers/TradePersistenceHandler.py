@@ -13,6 +13,8 @@ from trades.pojos.Batch import Batch
 from markets.pojos.Market import Market
 from positions.pojos.Position import Position
 from wallets.pojos.WalletWithMarkets import WalletWithMarkets
+from django.db import connection
+from django.utils import timezone as django_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -491,8 +493,6 @@ class TradePersistenceHandler:
             Number of positions successfully updated with PNL calculations
         """
         try:
-            from django.db import connection
-            from django.utils import timezone as django_timezone
 
             logger.info(f"FETCH_TRADES_SCHEDULER :: Calculating PNL for positions marked for calculation")
             

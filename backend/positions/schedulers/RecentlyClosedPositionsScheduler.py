@@ -20,7 +20,7 @@ class RecentlyClosedPositionsScheduler:
         self.closedPositionAPI = ClosedPositionAPI()
 
     @staticmethod
-    def execute():
+    def updatePNLDataForRecentlyClosedPositions():
         
         logger.info("RECENTLY_CLOSED_POSITIONS_SCHEDULER :: Started updating closed positions")
         RecentlyClosedPositionsScheduler.updateRecentlyClosedPositions()

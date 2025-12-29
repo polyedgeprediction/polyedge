@@ -1,14 +1,15 @@
 """
 Service for interacting with Polymarket API for trade data.
 Handles all API calls with proper time range filtering, pagination, and error handling.
+Uses production-grade rate limiting with connection pooling.
 """
 from typing import List, Optional
 from datetime import datetime, timezone
-import requests
-import time
 import logging
 
 from trades.implementation.PolymarketUserActivityResponse import PolyMarketUserActivityResponse
+from framework.RateLimitedRequestHandler import RateLimitedRequestHandler
+from framework.RateLimiterType import RateLimiterType
 
 logger = logging.getLogger(__name__)
 
@@ -16,55 +17,70 @@ logger = logging.getLogger(__name__)
 class PolymarketAPIService:
     """
     Service for fetching trade data from Polymarket API.
-    Implements proper time range filtering, pagination, and rate limiting.
+    Implements proper time range filtering, pagination, and production-grade rate limiting.
     """
-    
+
     BASE_URL = "https://data-api.polymarket.com"
     ACTIVITY_ENDPOINT = "/activity"
     DEFAULT_LIMIT = 500
-    RATE_LIMIT_DELAY = 0.1  # 100ms between requests
-    MAX_RETRIES = 3
     REQUEST_TIMEOUT = 30
     SORT_BY = 'TIMESTAMP'
     SORT_DIRECTION = 'DESC'
+
+    def __init__(self):
+        """Initialize with rate-limited request handler."""
+        self.requestHandler = RateLimitedRequestHandler(
+            limiterType=RateLimiterType.TRADES,
+            sessionKey="polymarket_trades"
+        )
     
 
-    
-    @staticmethod
-    def _fetchTradesWithPagination(proxyWallet: str, conditionId: str, 
+    def _fetchTradesWithPagination(self, proxyWallet: str, conditionId: str,
                                    startTimestamp: Optional[int] = None,
                                    endTimestamp: Optional[int] = None,
                                    logPrefix: str = "") -> tuple[List[PolyMarketUserActivityResponse], Optional[int]]:
-    
+        """
+        Fetch trades with pagination using rate-limited request handler.
+
+        Args:
+            proxyWallet: Proxy wallet address
+            conditionId: Market condition ID
+            startTimestamp: Optional start timestamp filter
+            endTimestamp: Optional end timestamp filter
+            logPrefix: Optional log prefix for context
+
+        Returns:
+            Tuple of (trades list, latest timestamp)
+        """
         allTrades = []
         latestTimestamp = None
         offset = 0
-        
-        logMsg = f"SMART_WALLET_DISCOVERY :: Trade API Fetch Started{logPrefix}: {proxyWallet} - {conditionId}"
+
+        logMsg = f"FETCH_TRADES_SCHEDULER :: Trade API Fetch Started{logPrefix}: {proxyWallet[:10]} - {conditionId[:10]}"
         logger.info(logMsg)
-        
+
         # Build API call parameters - only include timestamps if provided
         apiParams = {
             'proxyWallet': proxyWallet,
             'conditionId': conditionId,
-            'limit': PolymarketAPIService.DEFAULT_LIMIT,
+            'limit': self.DEFAULT_LIMIT,
             'offset': offset,
-            'sortBy': PolymarketAPIService.SORT_BY,
-            'sortDirection': PolymarketAPIService.SORT_DIRECTION
+            'sortBy': self.SORT_BY,
+            'sortDirection': self.SORT_DIRECTION
         }
-        
+
         if startTimestamp is not None:
             apiParams['startTimestamp'] = startTimestamp
         if endTimestamp is not None:
             apiParams['endTimestamp'] = endTimestamp
-        
+
         while True:
             apiParams['offset'] = offset
-            rawTrades = PolymarketAPIService.hitUserActivityAPI(**apiParams)
-            
+            rawTrades = self._hitUserActivityAPI(**apiParams)
+
             if not rawTrades:
                 break
-            
+
             # Convert to PolyMarketUserActivity objects and track latest timestamp
             for rawTrade in rawTrades:
                 try:
@@ -75,40 +91,54 @@ class PolymarketAPIService:
                 except Exception as e:
                     logger.warning(f"Failed to parse trade: {e}")
                     continue
-            
-            if len(rawTrades) < PolymarketAPIService.DEFAULT_LIMIT:
+
+            if len(rawTrades) < self.DEFAULT_LIMIT:
                 break
-            
-            offset += PolymarketAPIService.DEFAULT_LIMIT
-        
-        logger.info(f"SMART_WALLET_DISCOVERY :: Completed{logPrefix}: {proxyWallet} - {conditionId} - {len(allTrades)}")
+
+            offset += self.DEFAULT_LIMIT
+
+        logger.info(f"FETCH_TRADES_SCHEDULER :: Completed{logPrefix}: {proxyWallet[:10]} - {conditionId[:10]} - {len(allTrades)} trades")
         return allTrades, latestTimestamp
-    
-    @staticmethod
-    def fetchAllTrades(proxyWallet: str, conditionId: str) -> tuple[List[PolyMarketUserActivityResponse], Optional[int]]:
+
+    def fetchAllTrades(self, proxyWallet: str, conditionId: str) -> tuple[List[PolyMarketUserActivityResponse], Optional[int]]:
         """Fetch all trades for a market without timestamp filtering."""
-        return PolymarketAPIService._fetchTradesWithPagination(proxyWallet, conditionId)
-    
-    @staticmethod
-    def fetchTradesInRange(proxyWallet: str, conditionId: str, 
+        return self._fetchTradesWithPagination(proxyWallet, conditionId)
+
+    def fetchTradesInRange(self, proxyWallet: str, conditionId: str,
                           startTimestamp: int, endTimestamp: int) -> tuple[List[PolyMarketUserActivityResponse], Optional[int]]:
         """Fetch trades within a specific timestamp range."""
         logPrefix = f" : {startTimestamp} - {endTimestamp}"
-        return PolymarketAPIService._fetchTradesWithPagination(
-            proxyWallet, 
-            conditionId, 
-            startTimestamp=startTimestamp, 
+        return self._fetchTradesWithPagination(
+            proxyWallet,
+            conditionId,
+            startTimestamp=startTimestamp,
             endTimestamp=endTimestamp,
             logPrefix=logPrefix
         )
     
-    
-    @staticmethod
-    def hitUserActivityAPI(proxyWallet: str, conditionId: str, limit: int, offset: int,sortBy: str = None, sortDirection: str = None,
-                         startTimestamp: Optional[int] = None, 
-                         endTimestamp: Optional[int] = None) -> List[dict]:
-        url = f"{PolymarketAPIService.BASE_URL}{PolymarketAPIService.ACTIVITY_ENDPOINT}"
-        
+    def _hitUserActivityAPI(self, proxyWallet: str, conditionId: str, limit: int, offset: int,
+                           sortBy: str = None, sortDirection: str = None,
+                           startTimestamp: Optional[int] = None,
+                           endTimestamp: Optional[int] = None) -> List[dict]:
+        """
+        Make rate-limited API call to fetch user activity (trades).
+        Uses RateLimitedRequestHandler for production-grade rate limiting and connection pooling.
+
+        Args:
+            proxyWallet: Proxy wallet address
+            conditionId: Market condition ID
+            limit: Number of records to fetch
+            offset: Pagination offset
+            sortBy: Optional sort field
+            sortDirection: Optional sort direction
+            startTimestamp: Optional start timestamp filter
+            endTimestamp: Optional end timestamp filter
+
+        Returns:
+            List of trade dictionaries from API
+        """
+        url = f"{self.BASE_URL}{self.ACTIVITY_ENDPOINT}"
+
         params = {
             'user': proxyWallet,
             'limit': limit,
@@ -118,48 +148,37 @@ class PolymarketAPIService:
 
         if sortBy:
             params['sortBy'] = sortBy
-        
+
         if sortDirection:
             params['sortDirection'] = sortDirection
-        
+
         if startTimestamp:
             params['start'] = startTimestamp
-            
+
         if endTimestamp:
             params['end'] = endTimestamp
-        
-        for attempt in range(PolymarketAPIService.MAX_RETRIES):
-            try:
-                response = requests.get(
-                    url, 
-                    params=params, 
-                    timeout=PolymarketAPIService.REQUEST_TIMEOUT
-                )
-                response.raise_for_status()
-                
+
+        try:
+            # Use rate-limited request handler (handles retries, rate limits, connection pooling)
+            response = self.requestHandler.get(url, params=params, timeout=self.REQUEST_TIMEOUT)
+
+            if response.status_code == 200:
                 trades = response.json()
                 if not isinstance(trades, list):
                     logger.info(f"FETCH_TRADES_SCHEDULER :: Unexpected response format: {type(trades)}")
                     return []
-                
                 return trades
-                
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 429:  # Rate limit
-                    delay = (2 ** attempt) * PolymarketAPIService.RATE_LIMIT_DELAY
-                    logger.warning(f"Rate limited, waiting {delay}s before retry")
-                elif attempt == PolymarketAPIService.MAX_RETRIES - 1:
-                    logger.error(f"HTTP error {e.response.status_code}: {e}")
-                    raise
-                    
-            except requests.exceptions.RequestException as e:
-                if attempt < PolymarketAPIService.MAX_RETRIES - 1:
-                    delay = (2 ** attempt) * PolymarketAPIService.RATE_LIMIT_DELAY
-                else:
-                    logger.error(f"Request failed after {PolymarketAPIService.MAX_RETRIES} attempts: {e}")
-                    raise
-        
-        return []
+
+            elif response.status_code == 404:
+                return []
+
+            else:
+                logger.error(f"FETCH_TRADES_SCHEDULER :: API error | Status: {response.status_code}")
+                return []
+
+        except Exception as e:
+            logger.error(f"FETCH_TRADES_SCHEDULER :: API request failed | {str(e)}")
+            return []
     
 
     @staticmethod

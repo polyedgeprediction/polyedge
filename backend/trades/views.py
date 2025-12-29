@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework import status
 import logging
 
-from trades.schedulers.FetchTradesScheduler import TradeProcessingScheduler
+from trades.schedulers.FetchTradesScheduler import FetchTradesScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def sync_trades(request):
         logger.info("Trade sync API endpoint called")
         
         # Execute trade synchronization
-        TradeProcessingScheduler.fetchTrades()
+        FetchTradesScheduler.fetchTrades()
         
         logger.info("Trade sync completed successfully")
         return Response(

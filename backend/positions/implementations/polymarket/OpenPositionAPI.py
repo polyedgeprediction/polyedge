@@ -72,9 +72,15 @@ class OpenPositionAPI:
             
             # Move to next page
             offset += limit
-            logger.info("OPEN_POSITION_API :: Fetched %d total positions | Wallet: %s | Offset: %d - #%d", len(allPositions), walletAddress[:10], offset, candidateNumber)
+            if candidateNumber is not None:
+                logger.info("OPEN_POSITION_API :: Fetched %d positions | %s | Offset: %d | Candidate #%d", len(allPositions), walletAddress[:10], offset, candidateNumber)
+            else:
+                logger.info("OPEN_POSITION_API :: Fetched %d positions | %s | Offset: %d", len(allPositions), walletAddress[:10], offset)
 
-        logger.info("OPEN_POSITION_API :: Fetched %d total positions | Wallet: %s - #%d", len(allPositions), walletAddress[:10], candidateNumber)
+        if candidateNumber is not None:
+            logger.info("OPEN_POSITION_API :: Completed | %d positions | %s | Candidate #%d", len(allPositions), walletAddress[:10], candidateNumber)
+        else:
+            logger.info("OPEN_POSITION_API :: Completed | %d positions | %s", len(allPositions), walletAddress[:10])
         
         return allPositions
 
