@@ -8,6 +8,7 @@ import logging
 
 from positions.models import Position as PositionModel
 from positions.enums.TradeStatus import TradeStatus
+from positions.enums.PositionStatus import PositionStatus
 from trades.models import Batch as BatchModel
 from trades.pojos.Batch import Batch
 from markets.pojos.Market import Market
@@ -94,8 +95,8 @@ class TradePersistenceHandler:
                 apiRealizedPnl = row[16]
                 endDate = row[17]
                 negativeRisk = row[18]
-                positionStatus = row[19]
-                tradeStatus = row[20]
+                positionStatus = PositionStatus(row[19])
+                tradeStatus = TradeStatus(row[20])
                 # Get or create wallet POJO
                 if walletId not in walletsData:
                     walletsData[walletId] = WalletWithMarkets(

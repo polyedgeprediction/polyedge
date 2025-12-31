@@ -12,7 +12,7 @@ import logging
 import time
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+
 
 from wallets.smartwalletdiscovery.WalletEvaluvationService import WalletEvaluvationService
 from wallets.services.WalletPersistenceService import WalletPersistenceService
@@ -22,6 +22,7 @@ from wallets.pojos.WalletDiscoveryMetrics import WalletDiscoveryMetrics
 from wallets.smartwalletdiscovery.WalletCandidateFetcher import WalletCandidateFetcher
 from wallets.pojos.WalletEvaluvationResult import WalletEvaluvationResult
 from wallets.Constants import PARALLEL_WALLET_WORKERS
+from wallets.models import Wallet
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +59,20 @@ class SmartWalletDiscoveryService:
 
             logger.info("SMART_WALLET_DISCOVERY :: Candidates fetched: %d", len(candidates))
 
-            # Step 2: Process candidates through evaluation and persistence pipeline
-            metrics = self.processCandidates(candidates)
+            # Step 2: Filter out wallets that already exist and are active
+            filteredCandidates = self.filterExistingActiveWallets(candidates)
+            
+            if not filteredCandidates:
+                logger.info("SMART_WALLET_DISCOVERY :: All candidates already exist as active wallets")
+                executionTime = round(time.time() - startTime, 2)
+                return WalletDiscoveryResult.empty(executionTime)
 
-            # Step 3: Build response with metrics
+            logger.info("SMART_WALLET_DISCOVERY :: After filtering existing active wallets: %d candidates remaining", len(filteredCandidates))
+
+            # Step 3: Process candidates through evaluation and persistence pipeline
+            metrics = self.processCandidates(filteredCandidates)
+
+            # Step 4: Build response with metrics
             executionTime = round(time.time() - startTime, 2)
 
             discoveryResult = WalletDiscoveryResult.success(
@@ -139,3 +150,43 @@ class SmartWalletDiscoveryService:
         except Exception as e:
             metrics.recordProcessingError()
             logger.info("SMART_WALLET_DISCOVERY :: Error processing wallet | #%d | %s: %s",candidate.number, candidate.proxyWallet[:10], str(e), exc_info=True)
+
+    def filterExistingActiveWallets(self, candidates: List[WalletCandidate]) -> List[WalletCandidate]:
+        if not candidates:
+            return candidates
+
+        try:
+            # Create set of candidate addresses for efficient query
+            candidateAddresses = {candidate.proxyWallet for candidate in candidates}
+            
+            # Optimized query: get ONLY wallets that exist AND are active
+            # This minimizes the result set size, reducing comparison time significantly
+            # By querying only for active wallets, we avoid fetching unnecessary data
+            # Query leverages index on proxywallet for fast lookups
+            existingActiveAddresses = set(
+                Wallet.objects.filter(
+                    proxywallet__in=candidateAddresses,
+                    isactive=1
+                ).values_list('proxywallet', flat=True)
+            )
+            
+            # Filter candidates: keep only those NOT in existingActiveAddresses
+            # This means: wallets that don't exist OR exist but are not active
+            # Set membership check is O(1), making comparison very fast
+            filteredCandidates = [
+                candidate for candidate in candidates
+                if candidate.proxyWallet not in existingActiveAddresses
+            ]
+            
+            filteredCount = len(candidates) - len(filteredCandidates)
+            
+            if filteredCount > 0:
+                logger.info("SMART_WALLET_DISCOVERY :: Filtered out %d existing active wallets from %d candidates",
+                           filteredCount, len(candidates))
+            
+            return filteredCandidates
+            
+        except Exception as e:
+            logger.info("SMART_WALLET_DISCOVERY :: Error filtering existing active wallets: %s", str(e), exc_info=True)
+            # On error, return all candidates to avoid blocking the pipeline
+            return candidates

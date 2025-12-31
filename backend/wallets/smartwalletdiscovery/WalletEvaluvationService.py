@@ -174,6 +174,19 @@ class WalletEvaluvationService:
             # Create Position POJO from API response
             position = self.convertToPositionPOJO(apiPosition)
 
+            # Check for duplicate position with same outcome
+            existingPosition = self.findPositionByOutcome(market, position.outcome)
+            if existingPosition:
+                if self.arePositionsIdentical(existingPosition, position):
+                    logger.info("SMART_WALLET_DISCOVERY :: Duplicate position (identical) ignored | Market: %s | Outcome: %s - #%d",
+                               market.question, position.outcome, candidateNumber)
+                else:
+                    logger.info("SMART_WALLET_DISCOVERY :: Duplicate position (DIFFERENT) ignored | Market: %s | Outcome: %s | Existing: shares=%s, spent=%s, status=%s | New: shares=%s, spent=%s, status=%s - #%d",
+                               market.question, position.outcome,
+                               existingPosition.totalShares, existingPosition.amountSpent, existingPosition.positionStatus.name,
+                               position.totalShares, position.amountSpent, position.positionStatus.name, candidateNumber)
+                continue  # Skip adding this duplicate position
+
             # Add position to market (automatically updates counts)
             market.addPosition(position)
 
@@ -181,6 +194,7 @@ class WalletEvaluvationService:
 
     def convertToPositionPOJO(self, apiPosition: PolymarketPositionResponse) -> Position:
         """Convert API position response to Position POJO."""
+
         return Position(
             outcome=apiPosition.outcome,
             oppositeOutcome=apiPosition.oppositeOutcome,
@@ -196,6 +210,32 @@ class WalletEvaluvationService:
             tradeStatus=TradeStatus.NEED_TO_PULL_TRADES,  # Will be updated if we fetch trades
             positionStatus=apiPosition.positionType,
             timestamp=apiPosition.timestamp
+        )
+
+    def findPositionByOutcome(self, market: Market, outcome: str) -> Optional[Position]:
+        """Find existing position in market with matching outcome."""
+        for position in market.positions:
+            if position.outcome == outcome:
+                return position
+        return None
+
+    def arePositionsIdentical(self, pos1: Position, pos2: Position) -> bool:
+        """
+        Compare two positions to check if they're identical.
+
+        Compares key fields:
+        - totalShares, currentShares, averageEntryPrice
+        - amountSpent, amountRemaining
+        - apiRealizedPnl, positionStatus
+        """
+        return (
+            pos1.totalShares == pos2.totalShares and
+            pos1.currentShares == pos2.currentShares and
+            pos1.averageEntryPrice == pos2.averageEntryPrice and
+            pos1.amountSpent == pos2.amountSpent and
+            pos1.amountRemaining == pos2.amountRemaining and
+            pos1.apiRealizedPnl == pos2.apiRealizedPnl and
+            pos1.positionStatus == pos2.positionStatus
         )
 
     def processMarketsForPnl(self, walletAddress: str, evaluationResult: WalletEvaluvationResult, cutoffTimestamp: int, candidateNumber: int) -> None:
@@ -334,13 +374,14 @@ class WalletEvaluvationService:
         )
         marketTotalTakenOut = marketPnl + marketTotalInvested
 
-        market.calculatedPnl = marketPnl
-        market.calculatedAmountInvested = marketTotalInvested
+        market.calculatedPnl = marketPnl #16.6
+        market.calculatedAmountInvested = marketTotalInvested #245.94
         market.calculatedAmountTakenOut = marketTotalTakenOut
 
         # Set market-level PNL on all positions
         for position in market.positions:
             position.setPnlCalculationsForClosedPosition(marketTotalInvested, marketTotalTakenOut, marketPnl)
+            position.tradeStatus = TradeStatus.TRADES_SYNCED
 
         # Check if any closed position is in range (check both endDate and timestamp)
         if self.hasClosedPositionsInRange(market.positions, cutoffTimestamp):

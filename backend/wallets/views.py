@@ -168,7 +168,8 @@ def evaluateWalletsOnDemand(request: Request) -> Response:
                 username=f"User_{w['address'][:8]}",
                 allTimePnl=Decimal('0'),
                 allTimeVolume=Decimal('0'),
-                categories=[w['category']] if 'category' in w else []
+                categories=[w['category']] if 'category' in w else [],
+                number=1
             )
             for w in wallets
         ]
