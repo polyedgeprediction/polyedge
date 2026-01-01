@@ -23,7 +23,7 @@ POLYMARKET_HEADERS = {
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 }
 
-# SMART_MONEY_CATEGORIES = ["politics", "sports", "crypto", "finance", "culture", "mentions", "weather", "economics", "tech"]
+# SMART_MONEY_CATEGORIES = ["politics", "sports", "crypto", "finance", "culture", "mentions", "weather", "economics", "tech", "overall"]
 
 SMART_MONEY_CATEGORIES = ["crypto"]
 

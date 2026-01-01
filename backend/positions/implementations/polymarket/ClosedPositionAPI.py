@@ -4,7 +4,7 @@ API client for fetching closed positions from Polymarket.
 import logging
 import time
 import requests
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from positions.implementations.polymarket.Constants import (
     POLYMARKET_CLOSED_POSITIONS_URL,
@@ -16,6 +16,7 @@ from positions.pojos.PolymarketPositionResponse import PolymarketPositionRespons
 from positions.enums.PositionStatus import PositionStatus
 from framework.RateLimitedRequestHandler import RateLimitedRequestHandler
 from framework.RateLimiterType import RateLimiterType
+from wallets.Constants import MAX_CLOSED_POSITIONS
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,61 @@ class ClosedPositionAPI:
             sessionKey="polymarket_closed_positions"
         )
 
-    def fetchClosedPositions(self, walletAddress: str, candidateNumber: int=None) -> List[PolymarketPositionResponse]:
+    def fetchClosedPositions(
+        self,
+        walletAddress: str,
+        candidateNumber: Optional[int] = None
+    ) -> List[PolymarketPositionResponse]:
+        """
+        Fetch all closed positions for a wallet (without limit checking).
+        
+        Used by other flows that don't need limit validation.
+        
+        Args:
+            walletAddress: Wallet address to fetch positions for
+            candidateNumber: Optional candidate number for logging
+        
+        Returns:
+            List of closed positions
+        """
+        return self._fetchClosedPositionsInternal(walletAddress, candidateNumber, checkLimit=False)
+
+    def fetchClosedPositionsWithLimitCheck(
+        self,
+        walletAddress: str,
+        candidateNumber: Optional[int] = None
+    ) -> List[PolymarketPositionResponse]:
+        """
+        Fetch all closed positions for a wallet with early termination on limit exceed.
+        
+        Used by wallet discovery flow that needs to validate position limits.
+        
+        Args:
+            walletAddress: Wallet address to fetch positions for
+            candidateNumber: Optional candidate number for logging
+        
+        Returns:
+            List of closed positions
+        """
+        return self._fetchClosedPositionsInternal(walletAddress, candidateNumber, checkLimit=True)
+
+    def _fetchClosedPositionsInternal(
+        self,
+        walletAddress: str,
+        candidateNumber: Optional[int],
+        checkLimit: bool
+    ) -> List[PolymarketPositionResponse]:
+        """
+        Internal method to fetch closed positions with optional limit checking.
+        
+        Args:
+            walletAddress: Wallet address to fetch positions for
+            candidateNumber: Optional candidate number for logging
+            checkLimit: If True, check position limits and terminate early if exceeded
+        
+        Returns:
+            List of closed positions
+        """
         allPositions = []
         offset = 0
         limit = 50
@@ -60,12 +115,17 @@ class ClosedPositionAPI:
             if not positions:
                 break
             
-            # Convert API response to POJOs immediately
+            # Convert API response to POJOs
             positionPojos = [
                 PolymarketPositionResponse.fromAPIResponse(data, PositionStatus.CLOSED)
                 for data in positions
             ]
             allPositions.extend(positionPojos)
+            
+            # Early termination if limit checking is enabled and limit exceeded
+            if checkLimit and len(allPositions) > MAX_CLOSED_POSITIONS:
+                self._logCompletion(walletAddress, len(allPositions), offset, candidateNumber, earlyTermination=True)
+                break
             
             # If we got less than limit, we've reached the end
             if len(positions) < limit:
@@ -73,11 +133,52 @@ class ClosedPositionAPI:
             
             # Move to next page
             offset += limit
-            logger.info("CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s | Offset: %d - #%d", len(allPositions), walletAddress[:10], offset, candidateNumber)
+            self._logProgress(walletAddress, len(allPositions), offset, candidateNumber)
         
-        logger.info("CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s - #%d",len(allPositions),walletAddress[:10], candidateNumber)
-        
+        self._logCompletion(walletAddress, len(allPositions), offset, candidateNumber, earlyTermination=False)
         return allPositions
+
+    def _logProgress(
+        self,
+        walletAddress: str,
+        totalCount: int,
+        offset: int,
+        candidateNumber: Optional[int]
+    ) -> None:
+        """Log progress during pagination."""
+        logger.info(
+            "CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s | Offset: %d - #%d",
+            totalCount,
+            walletAddress[:10],
+            offset,
+            candidateNumber
+        )
+
+    def _logCompletion(
+        self,
+        walletAddress: str,
+        totalCount: int,
+        offset: int,
+        candidateNumber: Optional[int],
+        earlyTermination: bool
+    ) -> None:
+        """Log completion or early termination."""
+        if earlyTermination:
+            logger.info(
+                "CLOSED_POSITION_API :: Early termination (limit exceeded) | "
+                "%d positions | Wallet: %s | Offset: %d - #%d",
+                totalCount,
+                walletAddress[:10],
+                offset,
+                candidateNumber
+            )
+        else:
+            logger.info(
+                "CLOSED_POSITION_API :: Fetched %d total positions | Wallet: %s - #%d",
+                totalCount,
+                walletAddress[:10],
+                candidateNumber
+            )
 
     def fetchClosedPositionsForMarket(self, walletAddress: str, conditionId: str, offset:int = 0) -> List[PolymarketPositionResponse]:
         params = {

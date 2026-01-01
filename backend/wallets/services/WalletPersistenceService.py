@@ -11,7 +11,7 @@ Key Features:
 - Thread-safe persistence with database locking
 """
 import logging
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from decimal import Decimal
 from datetime import datetime
 from django.db import transaction
@@ -596,6 +596,21 @@ class WalletPersistenceService:
             periodStart = now - timezone.timedelta(days=period)
             periodEnd = now
 
+            # Calculate winrates
+            realizedWinrate, realizedWinrateOdds = WalletPersistenceService.calculateWinrate(
+                evaluationResult.realizedWins,
+                evaluationResult.realizedLosses
+            )
+            unrealizedWinrate, unrealizedWinrateOdds = WalletPersistenceService.calculateWinrate(
+                evaluationResult.unrealizedWins,
+                evaluationResult.unrealizedLosses
+            )
+            # High volume winrate - for now, use same as realized (can be customized later)
+            highVolumeWinrate, highVolumeWinrateOdds = WalletPersistenceService.calculateWinrate(
+                evaluationResult.realizedWins,
+                evaluationResult.realizedLosses
+            )
+
             # Use amounts from evaluationResult (already calculated during discovery)
             pnlData = {
                 'period': period,
@@ -609,7 +624,13 @@ class WalletPersistenceService:
                 'closedcurrentvalue': evaluationResult.closedCurrentValue,
                 'totalinvestedamount': evaluationResult.totalInvestedAmount,
                 'totalamountout': evaluationResult.totalAmountOut,
-                'currentvalue': evaluationResult.totalCurrentValue
+                'currentvalue': evaluationResult.totalCurrentValue,
+                'realizedwinrateodds': realizedWinrateOdds,
+                'realizedwinrate': realizedWinrate,
+                'unrealizedwinrateodds': unrealizedWinrateOdds,
+                'unrealizedwinrate': unrealizedWinrate,
+                'highvolumewinrateodds': highVolumeWinrateOdds,
+                'highvolumewinrate': highVolumeWinrate
             }
 
             # Create or update PnL record
@@ -620,9 +641,13 @@ class WalletPersistenceService:
             )
 
             action = "Created" if created else "Updated"
-            logger.info("SMART_WALLET_DISCOVERY :: %s 30-day PnL | Wallet: %s | Total Invested: %.2f | Current Value: %.2f - #%d",action,wallet.proxywallet[:10],
+            logger.info("SMART_WALLET_DISCOVERY :: %s 30-day PnL | Wallet: %s | Total Invested: %.2f | Current Value: %.2f | Realized WR: %s | Unrealized WR: %s - #%d",
+                action,
+                wallet.proxywallet[:10],
                 float(evaluationResult.totalInvestedAmount),
                 float(evaluationResult.totalCurrentValue),
+                realizedWinrateOdds or "N/A",
+                unrealizedWinrateOdds or "N/A",
                 candidateNumber
             )
 
@@ -632,3 +657,25 @@ class WalletPersistenceService:
                 candidateNumber,
                 exc_info=True
             )
+
+    @staticmethod
+    def calculateWinrate(wins: int, losses: int) -> Tuple[Optional[Decimal], Optional[str]]:
+        """
+        Calculate winrate decimal and odds string.
+        
+        Args:
+            wins: Number of wins
+            losses: Number of losses
+            
+        Returns:
+            Tuple of (winrateDecimal, winrateOddsString)
+            Both are None if no bets (wins + losses = 0)
+        """
+        totalBets = wins + losses
+        if totalBets == 0:
+            return None, None
+            
+        winrateDecimal = Decimal(str(wins)) / Decimal(str(totalBets))
+        winrateOdds = f"{wins}/{totalBets}"
+        
+        return winrateDecimal, winrateOdds
