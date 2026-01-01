@@ -54,7 +54,8 @@ class WalletEvaluvationService:
 
     def __init__(self):
         self.openPositionAPI = OpenPositionAPI()
-        self.closedPositionAPI = ClosedPositionAPI()    
+        self.closedPositionAPI = ClosedPositionAPI()
+        self.polymarketAPIService = PolymarketAPIService()    
 
     def evaluateWallet(self, candidate: WalletCandidate) -> WalletEvaluvationResult:
         walletAddress = candidate.proxyWallet
@@ -572,7 +573,7 @@ class WalletEvaluvationService:
             Tuple of (dailyTradesMap, latestTimestamp) - both can be None if no trades or error
         """
         try:
-            rawTrades, latestTimestamp = PolymarketAPIService.fetchAllTrades(walletAddress, conditionId)
+            rawTrades, latestTimestamp = self.polymarketAPIService.fetchAllTrades(proxyWallet=walletAddress, conditionId=conditionId)
 
             if not rawTrades:
                 return None, None

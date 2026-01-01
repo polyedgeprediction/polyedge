@@ -102,7 +102,7 @@ class PolymarketAPIService:
 
     def fetchAllTrades(self, proxyWallet: str, conditionId: str) -> tuple[List[PolyMarketUserActivityResponse], Optional[int]]:
         """Fetch all trades for a market without timestamp filtering."""
-        return self._fetchTradesWithPagination(proxyWallet, conditionId)
+        return self._fetchTradesWithPagination( proxyWallet=proxyWallet, conditionId=conditionId)
 
     def fetchTradesInRange(self, proxyWallet: str, conditionId: str,
                           startTimestamp: int, endTimestamp: int) -> tuple[List[PolyMarketUserActivityResponse], Optional[int]]:
