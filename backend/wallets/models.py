@@ -244,6 +244,46 @@ class WalletPnl(models.Model):
         help_text="Total current value (open + closed)"
     )
 
+    # Winrate tracking
+    realizedwinrateodds = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Realized winrate odds (number of wins / total number of bets)"
+    )
+
+    realizedwinrate = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=0.0000,
+        help_text="Realized winrate (decimal)"
+    )
+
+    unrealizedwinrateodds = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Unrealized winrate odds (number of wins / total number of bets)"
+    )
+
+    unrealizedwinrate = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=0.0000,
+        help_text="Unrealized winrate (decimal)"
+    )
+
+    highvolumewinrateodds = models.TextField(
+        blank=True,
+        null=True,
+        help_text="High volume winrate odds (number of high volume wins / total number of high volume bets)"
+    )
+
+    highvolumewinrate = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=0.0000,
+        help_text="High volume winrate (decimal)"
+    )
+
     # Timestamps
     createdat = models.DateTimeField(
         auto_now_add=True,
@@ -388,6 +428,46 @@ class WalletPnlHistory(models.Model):
         decimal_places=2,
         default=0.00,
         help_text="Total current value (open + closed)"
+    )
+
+    # Winrate tracking
+    realizedwinrateodds = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Realized winrate odds (number of wins / total number of bets)"
+    )
+
+    realizedwinrate = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=0.0000,
+        help_text="Realized winrate (decimal)"
+    )
+
+    unrealizedwinrateodds = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Unrealized winrate odds (number of wins / total number of bets)"
+    )
+
+    unrealizedwinrate = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=0.0000,
+        help_text="Unrealized winrate (decimal)"
+    )
+
+    highvolumewinrateodds = models.TextField(
+        blank=True,
+        null=True,
+        help_text="High volume winrate odds (number of high volume wins / total number of high volume bets)"
+    )
+
+    highvolumewinrate = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=0.0000,
+        help_text="High volume winrate (decimal)"
     )
 
     # Timestamps

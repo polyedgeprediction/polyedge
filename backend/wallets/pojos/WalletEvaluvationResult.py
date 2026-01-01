@@ -33,6 +33,13 @@ class WalletEvaluvationResult:
     totalAmountOut: Decimal = Decimal('0')
     totalCurrentValue: Decimal = Decimal('0')
 
+    # Win/loss tracking
+    realizedWins: int = 0
+    realizedLosses: int = 0
+    unrealizedWins: int = 0
+    unrealizedLosses: int = 0
+    totalBets: int = 0
+
     # Hierarchical structure: Dict[eventSlug, Event]
     eventHierarchy: Dict = field(default_factory=dict)
 

@@ -32,14 +32,22 @@ from markets.pojos.Market import Market
 from positions.pojos.Position import Position
 from wallets.pojos.WalletCandidate import WalletCandidate
 from wallets.pojos.WalletEvaluvationResult import WalletEvaluvationResult
+from wallets.smartwalletdiscovery.PositionLimitValidator import countValidOpenPositions
 from wallets.Constants import (
     WALLET_FILTER_TRADE_COUNT_THRESHOLD,
     WALLET_FILTER_POSITION_COUNT_THRESHOLD,
     WALLET_FILTER_PNL_THRESHOLD,
-    WALLET_EVALUVATION_ACTIVITY_WINDOW_DAYS
+    WALLET_EVALUVATION_ACTIVITY_WINDOW_DAYS,
+    MAX_OPEN_POSITIONS_WITH_FUTURE_END_DATE,
+    MAX_CLOSED_POSITIONS
 )
 
 logger = logging.getLogger(__name__)
+
+
+class PositionLimitExceededException(Exception):
+    """Exception raised when position limits are exceeded."""
+    pass
 
 
 class WalletEvaluvationService:
@@ -62,7 +70,7 @@ class WalletEvaluvationService:
         logger.info("SMART_WALLET_DISCOVERY :: Starting evaluation | Wallet: %s - #%d", walletAddress[:10], candidate.number)
 
         try:
-            # Step 1: Fetch all positions
+            # Step 1: Fetch positions and validate limits (returns early if limits exceeded)
             openPositions, closedPositions = self.fetchPositions(walletAddress, candidate.number)
             logger.info("SMART_WALLET_DISCOVERY :: Positions fetched | Open: %d | Closed: %d | Wallet: %s  - #%d",len(openPositions), len(closedPositions), walletAddress[:10], candidate.number)
 
@@ -105,19 +113,54 @@ class WalletEvaluvationService:
 
             return walletEvaluvationResult
 
+        except PositionLimitExceededException as e:
+            # Position limits exceeded - return early
+            return WalletEvaluvationResult.create(
+                walletAddress=walletAddress,
+                passed=False,
+                failReason=str(e),
+                candidate=candidate
+            )
         except Exception as e:
             logger.info("SMART_WALLET_DISCOVERY :: Evaluation failed | Wallet: %s | Error: %s - #%d",walletAddress[:10], str(e), candidate.number, exc_info=True)
             return WalletEvaluvationResult.create(
                 walletAddress=walletAddress,
                 passed=False,
-                failReason=f"Evaluation error: {str(e)[:100]} - #%d",
+                failReason=f"Evaluation error: {str(e)[:100]}",
                 candidate=candidate
             )
 
     def fetchPositions(self, walletAddress: str, candidateNumber: int) -> Tuple[List[PolymarketPositionResponse], List[PolymarketPositionResponse]]:
-        """Fetch open and closed positions for wallet."""
-        openPositions = self.openPositionAPI.fetchOpenPositions(walletAddress, candidateNumber)
-        closedPositions = self.closedPositionAPI.fetchClosedPositions(walletAddress, candidateNumber)
+        """
+        Fetch open and closed positions for wallet with limit validation.
+        
+        If any position limit is exceeded, raises PositionLimitExceededException
+        to stop processing early and avoid unnecessary API calls.
+        """
+        # Fetch open positions first (with limit checking)
+        openPositions = self.openPositionAPI.fetchOpenPositionsWithLimitCheck(walletAddress, candidateNumber)
+        
+        # Validate open positions limit
+        validOpenCount = countValidOpenPositions(openPositions)
+        if validOpenCount > MAX_OPEN_POSITIONS_WITH_FUTURE_END_DATE:
+            reason = (f"Open positions with future endDate exceed limit | Count: {validOpenCount} | Limit: {MAX_OPEN_POSITIONS_WITH_FUTURE_END_DATE}")
+            logger.info("SMART_WALLET_DISCOVERY :: REJECTED | Candidate #%d | Wallet: %s | %s",candidateNumber,walletAddress[:10],reason)
+            raise PositionLimitExceededException(reason)
+        
+        # Fetch closed positions (with limit checking)
+        closedPositions = self.closedPositionAPI.fetchClosedPositionsWithLimitCheck(walletAddress, candidateNumber)
+        
+        # Validate closed positions limit
+        closedCount = len(closedPositions)
+        if closedCount > MAX_CLOSED_POSITIONS:
+            reason = (f"Closed positions exceed limit | Count: {closedCount} | Limit: {MAX_CLOSED_POSITIONS}")
+            logger.info("SMART_WALLET_DISCOVERY :: REJECTED | Candidate #%d | Wallet: %s | %s",candidateNumber,walletAddress[:10],reason)
+            raise PositionLimitExceededException(reason)
+        
+        # Log success
+        logger.info("SMART_WALLET_DISCOVERY :: PASSED | Candidate #%d | Wallet: %s | Open (future endDate): %d/%d | Closed: %d/%d",
+            candidateNumber, walletAddress[:10], validOpenCount, MAX_OPEN_POSITIONS_WITH_FUTURE_END_DATE, closedCount, MAX_CLOSED_POSITIONS)
+        
         return openPositions, closedPositions
 
     def buildEventHierarchy(self,openPositions: List[PolymarketPositionResponse],closedPositions: List[PolymarketPositionResponse]=None, candidateNumber: int=None) -> Dict[str, Event]:
@@ -264,6 +307,13 @@ class WalletEvaluvationService:
         closedInvested = Decimal('0')
         closedOut = Decimal('0')
 
+        # Win/loss accumulators
+        realizedWins = 0
+        realizedLosses = 0
+        unrealizedWins = 0
+        unrealizedLosses = 0
+        totalBets = 0
+
         eventHierarchy = evaluationResult.eventHierarchy
 
         for event in eventHierarchy.values():
@@ -283,6 +333,15 @@ class WalletEvaluvationService:
                         openInvested += mktInvested
                         openOut += mktOut
                         openCurrentValue += mktCurrentValue
+                        
+                        # Count unrealized wins/losses based on market PnL
+                        marketPositionCount = len(market.positions)
+                        if marketPnl > 0:
+                            unrealizedWins += marketPositionCount
+                            totalBets += marketPositionCount
+                        elif marketPnl < 0:
+                            unrealizedLosses += marketPositionCount
+                            totalBets += marketPositionCount
                     logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f | Open PNL: %.2f | PNL added: %.2f - #%d",market.question, float(totalPnl or 0), float(openPnl or 0), float(marketPnl or 0), candidateNumber)
                 else:
                     # Market has only closed positions - use API PNL
@@ -294,6 +353,15 @@ class WalletEvaluvationService:
                         tradeCount += market.closedPositionCount
                         closedInvested += mktInvested
                         closedOut += mktOut
+                        
+                        # Count realized wins/losses based on market PnL
+                        marketPositionCount = len(market.positions)
+                        if marketPnl > 0:
+                            realizedWins += marketPositionCount
+                            totalBets += marketPositionCount
+                        elif marketPnl < 0:
+                            realizedLosses += marketPositionCount
+                            totalBets += marketPositionCount
                     logger.info("SMART_WALLET_DISCOVERY :: Market: %s | Total PNL: %.2f | Closed PNL: %.2f | PNL added: %.2f - #%d",market.question, float(totalPnl or 0), float(closedPnl or 0), float(marketPnl or 0), candidateNumber)
 
         # Populate evaluation result with all calculated values
@@ -311,6 +379,13 @@ class WalletEvaluvationService:
         evaluationResult.totalInvestedAmount = openInvested + closedInvested
         evaluationResult.totalAmountOut = openOut + closedOut
         evaluationResult.totalCurrentValue = openCurrentValue  # Only open has current value
+        
+        # Populate win/loss counts
+        evaluationResult.realizedWins = realizedWins
+        evaluationResult.realizedLosses = realizedLosses
+        evaluationResult.unrealizedWins = unrealizedWins
+        evaluationResult.unrealizedLosses = unrealizedLosses
+        evaluationResult.totalBets = totalBets
 
     def processMarketWithOpenPositions(self, walletAddress: str, market: Market, conditionId: str, cutoffTimestamp: int, candidateNumber: int) -> Tuple[Optional[Decimal], int, Decimal, Decimal, Decimal]:
         try:
@@ -656,4 +731,5 @@ class WalletEvaluvationService:
     def _countMarkets(self, eventHierarchy: Dict[str, Event]) -> int:
         """Count total markets across all events."""
         return sum(len(event.markets) for event in eventHierarchy.values())
+
 
