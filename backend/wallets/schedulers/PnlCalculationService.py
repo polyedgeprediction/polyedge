@@ -36,6 +36,12 @@ class PnlCalculationResult:
     totalCurrentValue: Decimal
     startTime: datetime
     endTime: datetime
+    # Win/loss tracking
+    realizedWins: int = 0
+    realizedLosses: int = 0
+    unrealizedWins: int = 0
+    unrealizedLosses: int = 0
+    totalBets: int = 0
 
 
 class PnlCalculationService:
@@ -118,6 +124,13 @@ class PnlCalculationService:
         openCurrentValue = Decimal('0')
         closedInvested = Decimal('0')
         closedOut = Decimal('0')
+        
+        # Win/loss accumulators
+        realizedWins = 0
+        realizedLosses = 0
+        unrealizedWins = 0
+        unrealizedLosses = 0
+        totalBets = 0
 
         for marketId, marketData in marketGroups.items():
             repPosition = marketData['representative']
@@ -136,8 +149,18 @@ class PnlCalculationService:
                     openInvested += repPosition.calculatedamountinvested or Decimal('0')
                     openOut += repPosition.calculatedamountout or Decimal('0')
                     openCurrentValue += repPosition.calculatedcurrentvalue or Decimal('0')
+                    
+                    # Count unrealized wins/losses based on market PnL
+                    marketPnl = repPosition.unrealizedpnl or Decimal('0')
+                    marketPositionCount = len(allPositions)
+                    if marketPnl > 0:
+                        unrealizedWins += marketPositionCount
+                        totalBets += marketPositionCount
+                    elif marketPnl < 0:
+                        unrealizedLosses += marketPositionCount
+                        totalBets += marketPositionCount
 
-                    logger.info("PNL_SCHEDULER :: Open market included | Market: %s | PnL: %.2f",repPosition.title[:30], float(repPosition.unrealizedpnl or 0))
+                    logger.info("PNL_SCHEDULER :: Open market included | Market: %s | PnL: %.2f",repPosition.title[:30], float(marketPnl))
             else:
                 # Closed market logic - matches processMarketWithClosedPositions
                 hasClosedInRange = self.evalService.hasClosedPositionsInRange(
@@ -147,8 +170,18 @@ class PnlCalculationService:
                 if hasClosedInRange:
                     closedInvested += repPosition.calculatedamountinvested or Decimal('0')
                     closedOut += repPosition.calculatedamountout or Decimal('0')
+                    
+                    # Count realized wins/losses based on market PnL
+                    marketPnl = repPosition.realizedpnl or Decimal('0')
+                    marketPositionCount = len(allPositions)
+                    if marketPnl > 0:
+                        realizedWins += marketPositionCount
+                        totalBets += marketPositionCount
+                    elif marketPnl < 0:
+                        realizedLosses += marketPositionCount
+                        totalBets += marketPositionCount
 
-                    logger.info("PNL_SCHEDULER :: Closed market included | Market: %s | PnL: %.2f",repPosition.title[:30], float(repPosition.realizedpnl or 0))
+                    logger.info("PNL_SCHEDULER :: Closed market included | Market: %s | PnL: %.2f",repPosition.title[:30], float(marketPnl))
 
         result = PnlCalculationResult(
             openAmountInvested=openInvested,
@@ -161,7 +194,12 @@ class PnlCalculationService:
             totalAmountOut=openOut + closedOut,
             totalCurrentValue=openCurrentValue,
             startTime=datetime.fromtimestamp(cutoffTimestamp, tz=timezone.utc),
-            endTime=now
+            endTime=now,
+            realizedWins=realizedWins,
+            realizedLosses=realizedLosses,
+            unrealizedWins=unrealizedWins,
+            unrealizedLosses=unrealizedLosses,
+            totalBets=totalBets
         )
 
         logger.info("PNL_SCHEDULER :: Calculation complete | Wallet: %s | Open PnL: %.2f | Closed PnL: %.2f",
@@ -238,6 +276,13 @@ class PnlCalculationService:
         openCurrentValue = Decimal('0')
         closedInvested = Decimal('0')
         closedOut = Decimal('0')
+        
+        # Win/loss accumulators
+        realizedWins = 0
+        realizedLosses = 0
+        unrealizedWins = 0
+        unrealizedLosses = 0
+        totalBets = 0
 
         # Calculate cutoff date for period comparison
         cutoffDate = datetime.fromtimestamp(cutoffTimestamp, tz=timezone.utc).date()
@@ -259,8 +304,18 @@ class PnlCalculationService:
                             openInvested += repPosition.calculatedAmountInvested or Decimal('0')
                             openOut += repPosition.calculatedAmountTakenOut or Decimal('0')
                             openCurrentValue += repPosition.calculatedCurrentValue or Decimal('0')
+                            
+                            # Count unrealized wins/losses based on market PnL
+                            marketPnl = repPosition.unrealizedPnl or Decimal('0')
+                            marketPositionCount = len(market.positions)
+                            if marketPnl > 0:
+                                unrealizedWins += marketPositionCount
+                                totalBets += marketPositionCount
+                            elif marketPnl < 0:
+                                unrealizedLosses += marketPositionCount
+                                totalBets += marketPositionCount
 
-                            logger.info("PNL_SCHEDULER :: Open market included | Market: %s | PnL: %.2f | Wallet: %s | Period: %d days",market.question[:30], float(repPosition.unrealizedPnl or 0), wallet.proxywallet[:10], periodDays)
+                            logger.info("PNL_SCHEDULER :: Open market included | Market: %s | PnL: %.2f | Wallet: %s | Period: %d days",market.question[:30], float(marketPnl), wallet.proxywallet[:10], periodDays)
                 else:
                     # Markets with only closed positions
                     hasClosedInRange = self.evalService.hasClosedPositionsInRange(
@@ -273,8 +328,18 @@ class PnlCalculationService:
                         if repPosition:
                             closedInvested += repPosition.calculatedAmountInvested or Decimal('0')
                             closedOut += repPosition.calculatedAmountTakenOut or Decimal('0')
+                            
+                            # Count realized wins/losses based on market PnL
+                            marketPnl = repPosition.realizedPnl or Decimal('0')
+                            marketPositionCount = len(market.positions)
+                            if marketPnl > 0:
+                                realizedWins += marketPositionCount
+                                totalBets += marketPositionCount
+                            elif marketPnl < 0:
+                                realizedLosses += marketPositionCount
+                                totalBets += marketPositionCount
 
-                            logger.info("PNL_SCHEDULER :: Closed market included | Market: %s | PnL: %.2f | Wallet: %s | Period: %d days",market.question[:30], float(repPosition.realizedPnl or 0), wallet.proxywallet[:10], periodDays)
+                            logger.info("PNL_SCHEDULER :: Closed market included | Market: %s | PnL: %.2f | Wallet: %s | Period: %d days",market.question[:30], float(marketPnl), wallet.proxywallet[:10], periodDays)
 
         result = PnlCalculationResult(
             openAmountInvested=openInvested,
@@ -287,7 +352,12 @@ class PnlCalculationService:
             totalAmountOut=openOut + closedOut,
             totalCurrentValue=openCurrentValue,
             startTime=datetime.fromtimestamp(cutoffTimestamp, tz=timezone.utc),
-            endTime=startTime
+            endTime=startTime,
+            realizedWins=realizedWins,
+            realizedLosses=realizedLosses,
+            unrealizedWins=unrealizedWins,
+            unrealizedLosses=unrealizedLosses,
+            totalBets=totalBets
         )
 
         logger.info("PNL_SCHEDULER :: Calculation complete | Wallet: %s | Open PnL: %.2f | Closed PnL: %.2f | Period: %d days",
@@ -311,5 +381,10 @@ class PnlCalculationService:
             totalAmountOut=Decimal('0'),
             totalCurrentValue=Decimal('0'),
             startTime=datetime.fromtimestamp(cutoffTimestamp, tz=timezone.utc),
-            endTime=startTime
+            endTime=startTime,
+            realizedWins=0,
+            realizedLosses=0,
+            unrealizedWins=0,
+            unrealizedLosses=0,
+            totalBets=0
         )
