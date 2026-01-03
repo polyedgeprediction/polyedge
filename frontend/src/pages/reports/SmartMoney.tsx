@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { RefreshCw, AlertCircle, ServerOff, WifiOff, ChevronLeft, ChevronRight, Copy, Check, Search, Calendar as CalendarIcon, X, ChevronDown, Users, TrendingUp, DollarSign } from 'lucide-react'
+import { RefreshCw, AlertCircle, ServerOff, WifiOff, ChevronLeft, ChevronRight, Copy, Check, Search, Calendar as CalendarIcon, X, ChevronDown } from 'lucide-react'
 import {
   BarChart,
   Bar,
@@ -766,37 +766,6 @@ export default function SmartMoney() {
 
                                   return (
                                     <div className="p-4">
-                                      {/* Summary Stats */}
-                                      <div className="grid grid-cols-3 gap-4 mb-4">
-                                        <div className="bg-surface border border-border-subtle rounded-lg p-3">
-                                          <div className="flex items-center gap-2 text-muted mb-1">
-                                            <Users className="w-3.5 h-3.5" />
-                                            <span className="text-xs">Total Wallets</span>
-                                          </div>
-                                          <div className="text-lg font-semibold font-mono tabular-nums text-primary">
-                                            {levelsInfo.summary.totalWalletCount}
-                                          </div>
-                                        </div>
-                                        <div className="bg-surface border border-border-subtle rounded-lg p-3">
-                                          <div className="flex items-center gap-2 text-muted mb-1">
-                                            <TrendingUp className="w-3.5 h-3.5" />
-                                            <span className="text-xs">Total Positions</span>
-                                          </div>
-                                          <div className="text-lg font-semibold font-mono tabular-nums text-primary">
-                                            {levelsInfo.summary.totalPositionCount}
-                                          </div>
-                                        </div>
-                                        <div className="bg-surface border border-border-subtle rounded-lg p-3">
-                                          <div className="flex items-center gap-2 text-muted mb-1">
-                                            <DollarSign className="w-3.5 h-3.5" />
-                                            <span className="text-xs">Total Invested</span>
-                                          </div>
-                                          <div className="text-lg font-semibold font-mono tabular-nums text-primary">
-                                            {formatCurrencyCompact(levelsInfo.summary.totalAmountInvested)}
-                                          </div>
-                                        </div>
-                                      </div>
-
                                       {/* Charts */}
                                       {outcomeChartData.length > 0 ? (
                                         <div className={`grid gap-4 ${outcomeChartData.length === 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
