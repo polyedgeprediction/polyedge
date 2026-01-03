@@ -18,6 +18,7 @@ from trades.implementation.PolymarketUserActivityResponse import PolyMarketUserA
 from trades.implementation.PolymarketAPIService import PolymarketAPIService
 from trades.handlers.TradePersistenceHandler import TradePersistenceHandler
 from positions.enums.TradeStatus import TradeStatus
+from django.db import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -200,8 +201,6 @@ class TradeProcessingService:
     @staticmethod
     def persistAggregatedTrades(wallets: List[WalletWithMarkets], finalStatus: TradeStatus) -> None:
         try:
-            from django.db import transaction
-            
             # Collect all persistence data in one pass
             aggregatedTrades, statusUpdates, batchUpdates = TradeProcessingService.collectAggregatedData(wallets)
             

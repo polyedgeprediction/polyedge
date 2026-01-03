@@ -32,6 +32,7 @@ class Event:
     startDate: Optional[datetime] = None  # startdate
     endDate: Optional[datetime] = None  # enddate
     tags: Optional[list] = None
+    category: Optional[str] = None
 
     # Aggregated PNL across all markets in this event
     totalPnl: Decimal = field(default_factory=lambda: Decimal('0'))

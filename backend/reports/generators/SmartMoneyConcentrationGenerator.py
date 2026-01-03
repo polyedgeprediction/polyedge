@@ -246,5 +246,5 @@ class SmartMoneyConcentrationGenerator:
     def handleError(error: Exception, startTime: float) -> SmartMoneyConcentrationResponse:
         """Handle and log generation errors."""
         executionTime = time.time() - startTime
-        logger.error("%s :: Failed | Time: %.3fs | Error: %s", LOG_PREFIX, executionTime, str(error), exc_info=True)
+        logger.exception("%s :: Failed | Time: %.3fs | Error: %s", LOG_PREFIX, executionTime, str(error))
         return SmartMoneyConcentrationResponse.error(f"Report generation failed: {str(error)}")

@@ -4,6 +4,7 @@ Handler for persisting events to database.
 from typing import Dict
 from decimal import Decimal
 from django.utils import timezone
+from django.db import connection
 
 from events.models import Event as EventModel
 from events.pojos.Event import Event
@@ -22,81 +23,141 @@ class EventPersistenceHandler:
         SELECT e.*, m.*
         FROM events e
         INNER JOIN markets m ON e.eventid = m.eventsid
-        WHERE (e.enddate > NOW() OR e.enddate IS NULL)
-          AND m.enddate > NOW()
+        WHERE (e.enddate IS NULL OR e.enddate > NOW())
+          AND (m.enddate IS NULL OR m.enddate > NOW())
         ORDER BY e.eventslug, m.platformmarketid;
         
         Logic:
-        - Event hasn't ended: enddate > now OR enddate IS NULL
-        - Market hasn't ended: enddate > now
-        - Only include markets that belong to events that haven't ended
+        - If enddate IS NULL, process the record (no additional check)
+        - If enddate IS NOT NULL, then check if enddate > current date - only process if true
+        - Applies to both events and markets
         
         Returns:
             Dictionary of event slugs to Event POJOs with nested Market POJOs
         """
         now = timezone.now()
         
-        # Query: Get events that haven't ended AND their markets that haven't ended
-        marketsQuery = MarketModel.objects.filter(
-            enddate__gt=now,  # Market hasn't ended
-            eventsid__enddate__gt=now  # Event hasn't ended
-        ).select_related('eventsid')
-        
-        # Also include events with null end dates (treat as not ended)
-        marketsQueryNull = MarketModel.objects.filter(
-            enddate__gt=now,  # Market hasn't ended
-            eventsid__enddate__isnull=True  # Event has no end date (not ended)
-        ).select_related('eventsid')
-        
-        # Combine queries
-        allMarkets = list(marketsQuery) + list(marketsQueryNull)
+        # Clean PostgreSQL query: Get markets that haven't ended AND belong to events that haven't ended
+        # If enddate IS NULL, process the record (no additional check)
+        # If enddate IS NOT NULL, then check if enddate > current date - only process if true
+        # Applies to both events and markets
+        query = """
+            SELECT 
+                e.eventid,
+                e.eventslug,
+                e.platformeventid,
+                e.title,
+                e.description,
+                e.startdate,
+                e.enddate,
+                e.liquidity,
+                e.volume,
+                e."openInterest",
+                e.competitive,
+                e.marketcreatedat,
+                e.marketupdatedat,
+                e.negrisk,
+                e.tags,
+                e.category,
+                m.marketsid,
+                m.marketid,
+                m.marketslug,
+                m.platformmarketid,
+                m.question,
+                m.startdate as market_startdate,
+                m.enddate as market_enddate,
+                m.marketcreatedat as market_marketcreatedat,
+                m.closedtime,
+                m.volume as market_volume,
+                m.liquidity as market_liquidity,
+                m.competitive as market_competitive
+            FROM events e
+            INNER JOIN markets m ON e.eventid = m.eventsid
+            WHERE (e.enddate IS NULL OR e.enddate > %s)
+              OR (m.enddate IS NULL OR m.enddate > %s)
+            ORDER BY e.eventslug, m.platformmarketid
+        """
         
         # Build POJO structure grouped by event
         eventPojos: Dict[str, Event] = {}
         
-        # Process markets and their parent events
-        for marketModel in allMarkets:
-            eventModel = marketModel.eventsid
-            eventSlug = eventModel.eventslug
+        # Execute raw SQL query
+        with connection.cursor() as cursor:
+            cursor.execute(query, [now, now])
             
-            # Create event POJO if it doesn't exist
-            if eventSlug not in eventPojos:
-                eventPojo = Event(eventSlug=eventSlug)
-                eventPojo.platformEventId = eventModel.platformeventid
-                eventPojo.title = eventModel.title
-                eventPojo.description = eventModel.description
-                eventPojo.startDate = eventModel.startdate
-                eventPojo.endDate = eventModel.enddate
-                eventPojo.liquidity = eventModel.liquidity
-                eventPojo.volume = eventModel.volume
-                eventPojo.openInterest = eventModel.openInterest
-                eventPojo.competitive = eventModel.competitive
-                eventPojo.marketCreatedAt = eventModel.marketcreatedat
-                eventPojo.marketUpdatedAt = eventModel.marketupdatedat
-                eventPojo.negRisk = bool(eventModel.negrisk)
-                eventPojo.tags = eventModel.tags
-                eventPojos[eventSlug] = eventPojo
-            
-            # Add market to event
-            conditionId = marketModel.platformmarketid
-            
-            marketPojo = Market(
-                conditionId=conditionId,
-                marketSlug=marketModel.marketslug,
-                question=marketModel.question,
-                endDate=marketModel.enddate,
-                isOpen=marketModel.closedtime is None,
-                marketPk=marketModel.marketsid
-            )
-            marketPojo.marketId = marketModel.marketid
-            marketPojo.startDate = marketModel.startdate
-            marketPojo.volume = marketModel.volume
-            marketPojo.liquidity = marketModel.liquidity
-            marketPojo.competitive = marketModel.competitive
-            marketPojo.marketCreatedAt = marketModel.marketcreatedat
-            marketPojo.closedTime = marketModel.closedtime
-            
-            eventPojos[eventSlug].addMarket(conditionId, marketPojo)
+            # Process each row
+            for row in cursor.fetchall():
+                # Event fields
+                event_id = row[0]
+                event_slug = row[1]
+                platform_event_id = row[2]
+                event_title = row[3]
+                event_description = row[4]
+                event_startdate = row[5]
+                event_enddate = row[6]
+                event_liquidity = row[7]
+                event_volume = row[8]
+                event_openinterest = row[9]
+                event_competitive = row[10]
+                event_marketcreatedat = row[11]
+                event_marketupdatedat = row[12]
+                event_negrisk = row[13]
+                event_tags = row[14]
+                event_category = row[15]
+                
+                # Market fields
+                market_id = row[16]
+                market_marketid = row[17]
+                market_slug = row[18]
+                platform_market_id = row[19]
+                market_question = row[20]
+                market_startdate = row[21]
+                market_enddate = row[22]
+                market_marketcreatedat = row[23]
+                market_closedtime = row[24]
+                market_volume = row[25]
+                market_liquidity = row[26]
+                market_competitive = row[27]
+                
+                # Create event POJO if it doesn't exist
+                if event_slug not in eventPojos:
+                    eventPojo = Event(eventSlug=event_slug)
+                    eventPojo.platformEventId = platform_event_id
+                    eventPojo.title = event_title
+                    eventPojo.description = event_description
+                    eventPojo.startDate = event_startdate
+                    eventPojo.endDate = event_enddate
+                    eventPojo.liquidity = event_liquidity
+                    eventPojo.volume = event_volume
+                    eventPojo.openInterest = event_openinterest
+                    eventPojo.competitive = event_competitive
+                    eventPojo.marketCreatedAt = event_marketcreatedat
+                    eventPojo.marketUpdatedAt = event_marketupdatedat
+                    eventPojo.negRisk = bool(event_negrisk) if event_negrisk is not None else False
+                    eventPojo.tags = event_tags
+                    eventPojo.category = event_category
+                    eventPojos[event_slug] = eventPojo
+                
+                # Add market to event
+                conditionId = platform_market_id
+                
+                marketPojo = Market(
+                    conditionId=conditionId,
+                    marketSlug=market_slug,
+                    question=market_question,
+                    endDate=market_enddate,
+                    isOpen=market_closedtime is None,
+                    marketPk=market_id
+                )
+                marketPojo.marketId = market_marketid
+                marketPojo.startDate = market_startdate
+                marketPojo.volume = market_volume
+                marketPojo.liquidity = market_liquidity
+                marketPojo.competitive = market_competitive
+                marketPojo.marketCreatedAt = market_marketcreatedat
+                marketPojo.closedTime = market_closedtime
+                
+                eventPojos[event_slug].addMarket(conditionId, marketPojo)
         
         return eventPojos
 

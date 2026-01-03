@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from decimal import Decimal
 
-from reports.pojos.MarketConcentration import MarketConcentration
+from reports.pojos.smartmoneyconcentration.MarketConcentration import MarketConcentration
 
 
 @dataclass

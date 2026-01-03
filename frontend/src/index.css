@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+/* Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@theme {
+  --color-base: hsl(0 0% 4%);
+  --color-surface: hsl(0 0% 7%);
+  --color-elevated: hsl(0 0% 10%);
+  --color-subtle: hsl(0 0% 14%);
+  --color-primary: hsl(0 0% 98%);
+  --color-secondary: hsl(240 4% 65%);
+  --color-muted: hsl(240 4% 46%);
+  --color-border-subtle: hsl(240 4% 16%);
+  --color-border-default: hsl(240 4% 26%);
+  --color-profit: hsl(142 71% 45%);
+  --color-profit-bg: hsl(142 71% 45% / 0.08);
+  --color-loss: hsl(0 84% 60%);
+  --color-loss-bg: hsl(0 84% 60% / 0.08);
+  --color-accent: hsl(217 91% 60%);
+  --color-accent-hover: hsl(217 91% 50%);
+  --color-warning: hsl(38 92% 50%);
+  --color-info: hsl(187 85% 43%);
+  --color-background: hsl(0 0% 4%);
+  --color-foreground: hsl(0 0% 98%);
+  --color-card: hsl(0 0% 7%);
+  --color-card-foreground: hsl(0 0% 98%);
+  --color-popover: hsl(0 0% 7%);
+  --color-popover-foreground: hsl(0 0% 98%);
+  --color-muted-foreground: hsl(240 4% 46%);
+  --color-destructive: hsl(0 84% 60%);
+  --color-destructive-foreground: hsl(0 0% 98%);
+  --color-border: hsl(240 4% 16%);
+  --color-input: hsl(240 4% 26%);
+  --color-ring: hsl(217 91% 60%);
+  
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
+  
+  --radius: 0.5rem;
+}
+
+@layer base {
+  :root {
+    /* Backgrounds */
+    --bg-base: 0 0% 4%;
+    --bg-surface: 0 0% 7%;
+    --bg-elevated: 0 0% 10%;
+    --bg-subtle: 0 0% 14%;
+
+    /* Text */
+    --text-primary: 0 0% 98%;
+    --text-secondary: 240 4% 65%;
+    --text-muted: 240 4% 46%;
+
+    /* Borders */
+    --border-subtle: 240 4% 16%;
+    --border-default: 240 4% 26%;
+
+    /* Semantic */
+    --profit: 142 71% 45%;
+    --profit-bg: 142 71% 45% / 0.08;
+    --loss: 0 84% 60%;
+    --loss-bg: 0 84% 60% / 0.08;
+    --accent: 217 91% 60%;
+    --accent-hover: 217 91% 50%;
+    --warning: 38 92% 50%;
+    --info: 187 85% 43%;
+
+    /* shadcn compatibility */
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border-subtle;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}

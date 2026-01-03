@@ -6,7 +6,7 @@ from decimal import Decimal
 from datetime import datetime
 from typing import Dict, Optional
 
-from reports.pojos.OutcomeBreakdown import OutcomeBreakdown
+from reports.pojos.smartmoneyconcentration.OutcomeBreakdown import OutcomeBreakdown
 
 
 @dataclass

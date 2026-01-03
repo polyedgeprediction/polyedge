@@ -16,7 +16,7 @@ Performance Optimizations:
 """
 import logging
 from typing import List, Dict, Optional
-from decimal import Decimal
+from datetime import date
 from django.db import connection
 
 from reports.pojos.smartmoneyconcentration.SmartMoneyConcentrationRequest import SmartMoneyConcentrationRequest
@@ -40,11 +40,20 @@ class SmartMoneyConcentrationQuery:
             pnlPeriod=request.pnlPeriod,
             minWalletPnl=float(request.minWalletPnl),
             minInvestmentAmount=float(request.minInvestmentAmount),
-            category=request.category
+            category=request.category,
+            endDateFrom=request.endDateFrom,
+            endDateTo=request.endDateTo
         )
 
     @staticmethod
-    def executeQuery(pnlPeriod: int, minWalletPnl: float,minInvestmentAmount: float,category: Optional[str]) -> List[Dict]:
+    def executeQuery(
+        pnlPeriod: int, 
+        minWalletPnl: float,
+        minInvestmentAmount: float,
+        category: Optional[str],
+        endDateFrom: Optional[date] = None,
+        endDateTo: Optional[date] = None
+    ) -> List[Dict]:
         """
         Execute optimized SQL query to fetch smart money concentration data.
         
@@ -52,7 +61,8 @@ class SmartMoneyConcentrationQuery:
         1. CTE: Identify qualifying wallets (PNL >= threshold)
         2. Join positions with qualifying wallets (only open positions)
         3. Filter by minimum investment (market-wise, per wallet)
-        4. Include market and event details
+        4. Filter by end date range if provided
+        5. Include market and event details
         
         Edge Case Handling:
         - calculatedamountinvested/calculatedcurrentvalue are market-wise
@@ -63,14 +73,28 @@ class SmartMoneyConcentrationQuery:
         Returns:
             List of position rows with wallet, market, and event data
         """
-        # Build dynamic clauses
+        # Build params list - order must match placeholder order in query
+        params = [pnlPeriod, minWalletPnl]
+        
+        # Build dynamic category clause
         categoryClause = ""
-        categoryParams = []
         if category:
             categoryClause = "AND w.category ILIKE %s"
-            categoryParams = [f"%{category}%"]
+            params.append(f"%{category}%")
         
-        query = f"""
+        # Add minInvestmentAmount (matches placeholder order in qualifying_positions)
+        params.append(minInvestmentAmount)
+        
+        # Build dynamic end date clause for qualifying_positions
+        endDateClause = ""
+        if endDateFrom:
+            endDateClause += "AND p.enddate >= %s "
+            params.append(endDateFrom)
+        if endDateTo:
+            endDateClause += "AND p.enddate <= %s "
+            params.append(endDateTo)
+        
+        query = """
             WITH qualifying_wallets AS (
                 -- Step 1: Find wallets with PNL >= threshold for the period
                 -- PNL = (totalamountout + currentvalue) - totalinvestedamount
@@ -85,13 +109,14 @@ class SmartMoneyConcentrationQuery:
                 WHERE wp.period = %s
                 AND w.isactive = 1
                 AND (wp.totalamountout + wp.currentvalue - wp.totalinvestedamount) >= %s
-                {categoryClause}
+                {category_clause}
             ),
             qualifying_positions AS (
                 -- Step 2: Find positions that qualify:
                 -- - Open position (positionstatus = 1)
                 -- - End date in future (enddate > NOW)
                 -- - Market-wise investment >= threshold
+                -- - End date within optional date range filter
                 SELECT 
                     p.positionid,
                     p.walletsid,
@@ -110,6 +135,7 @@ class SmartMoneyConcentrationQuery:
                 WHERE p.positionstatus = 1
                 AND p.enddate > NOW()
                 AND p.calculatedamountinvested >= %s
+                {end_date_clause}
             ),
             qualifying_wallet_markets AS (
                 -- Step 3: Get distinct wallet-market combinations
@@ -154,10 +180,7 @@ class SmartMoneyConcentrationQuery:
             INNER JOIN markets m ON qp.marketsid = m.marketsid
             INNER JOIN events e ON m.eventsid = e.eventid
             ORDER BY qp.marketsid, qp.outcome, qp.calculatedamountinvested DESC
-        """
-        
-        # Build params list
-        params = [pnlPeriod, minWalletPnl] + categoryParams + [minInvestmentAmount, minInvestmentAmount]
+        """.format(category_clause=categoryClause, end_date_clause=endDateClause)
         
         try:
             with connection.cursor() as cursor:
@@ -165,34 +188,33 @@ class SmartMoneyConcentrationQuery:
                 columns = [col[0] for col in cursor.description]
                 results = [dict(zip(columns, row)) for row in cursor.fetchall()]
             
-            logger.info("%s :: Query executed | Rows: %d | Period: %d | MinPnL: %.0f | MinInvest: %.0f",
-                        LOG_PREFIX, len(results), pnlPeriod, minWalletPnl, minInvestmentAmount)
+            logger.info("%s :: Query executed | Rows: %d | Period: %d | MinPnL: %.0f | MinInvest: %.0f | EndDateFrom: %s | EndDateTo: %s",
+                        LOG_PREFIX, len(results), pnlPeriod, minWalletPnl, minInvestmentAmount, endDateFrom, endDateTo)
             
             return results
             
         except Exception as e:
-            logger.info("%s :: Query failed | Period: %d | Error: %s", LOG_PREFIX, pnlPeriod, str(e), exc_info=True)
+            logger.exception("%s :: Query failed | Period: %d | Error: %s", LOG_PREFIX, pnlPeriod, str(e))
             raise
 
     @staticmethod
-    def getQualifyingWalletCount(pnlPeriod: int,minWalletPnl: float,category: Optional[str] = None) -> int:
+    def getQualifyingWalletCount(pnlPeriod: int, minWalletPnl: float, category: Optional[str] = None) -> int:
+        params = [pnlPeriod, minWalletPnl]
+        
         categoryClause = ""
-        categoryParams = []
         if category:
             categoryClause = "AND w.category ILIKE %s"
-            categoryParams = [f"%{category}%"]
+            params.append(f"%{category}%")
         
-        query = f"""
+        query = """
             SELECT COUNT(DISTINCT wp.walletid)
             FROM walletpnl wp
             INNER JOIN wallets w ON wp.walletid = w.walletsid
             WHERE wp.period = %s
             AND w.isactive = 1
             AND (wp.totalamountout + wp.currentvalue - wp.totalinvestedamount) >= %s
-            {categoryClause}
-        """
-        
-        params = [pnlPeriod, minWalletPnl] + categoryParams
+            {category_clause}
+        """.format(category_clause=categoryClause)
         
         try:
             with connection.cursor() as cursor:
@@ -201,6 +223,6 @@ class SmartMoneyConcentrationQuery:
                 return result[0] if result else 0
                 
         except Exception as e:
-            logger.info("%s :: Wallet count query failed: %s", LOG_PREFIX, str(e), exc_info=True)
+            logger.exception("%s :: Wallet count query failed: %s", LOG_PREFIX, str(e))
             return 0
 
