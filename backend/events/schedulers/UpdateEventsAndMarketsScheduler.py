@@ -17,7 +17,11 @@ from events.implementations.polymarket.EventAPI import EventAPI
 from events.pojos.PolymarketEventResponse import PolymarketEventResponse
 from events.handlers.EventPersistenceHandler import EventPersistenceHandler
 from events.handlers.EventUpdateHandler import EventUpdateHandler
+from events.handlers.EventCategoryHandler import EventCategoryHandler
+from events.enums.EventCategory import EventCategory
+from events.models import Event as EventModel
 from markets.handlers.MarketUpdateHandler import MarketUpdateHandler
+from events.Constants import LOG_PREFIX_UPDATE_EVENTS_AND_MARKETS as LOG_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +41,16 @@ class UpdateEventsAndMarketsScheduler:
             events = EventPersistenceHandler.fetchActiveEventsWithMarkets()
 
             if not events:
-                logger.info("UPDATE_EVENTS_AND_MARKETS_SCHEDULER :: No events to update")
+                logger.info("%s :: No events to update", LOG_PREFIX)
                 return
 
-            logger.info(
-                "UPDATE_EVENTS_AND_MARKETS_SCHEDULER :: Started | Events: %d | Workers: %d",
-                len(events),
-                PARALLEL_EVENT_UPDATE_WORKERS
-            )
+            logger.info("%s :: Started | Events: %d | Workers: %d",LOG_PREFIX,len(events),PARALLEL_EVENT_UPDATE_WORKERS)
 
             # Step 2: Fetch API data in parallel
             apiResponses, eventsSucceeded, eventsFailed = scheduler.fetchAPIResponsesInParallel(events)
 
             if not apiResponses:
-                logger.info("UPDATE_EVENTS_AND_MARKETS_SCHEDULER :: No API responses received")
+                logger.info("%s :: No API responses received", LOG_PREFIX)
                 return
 
             # Step 3: Update POJOs with API data
@@ -63,35 +63,25 @@ class UpdateEventsAndMarketsScheduler:
 
             duration = (datetime.now(timezone.utc) - startTime).total_seconds()
             logger.info(
-                "UPDATE_EVENTS_AND_MARKETS_SCHEDULER :: Completed | %.2fs | "
-                "Success: %d | Failed: %d | Events updated: %d | Markets updated: %d",
+                "%s :: Completed | %.2fs | Success: %d | Failed: %d | Events updated: %d | Markets updated: %d",
+                LOG_PREFIX,
                 duration,
-                eventsSucceeded,
-                eventsFailed,
-                eventsUpdated,
-                marketsUpdated
+                eventsSucceeded, eventsFailed, eventsUpdated, marketsUpdated
             )
+
+            # Step 5: Post-process events to extract and assign categories from tags.
+            # This ensures newly updated events have their category field populated
+            # based on tag analysis, enabling better categorization and filtering.
+            UpdateEventsAndMarketsScheduler.setCategory()
 
             return
 
         except Exception as e:
-            logger.error(
-                "UPDATE_EVENTS_AND_MARKETS_SCHEDULER :: Error: %s",
-                str(e),
-                exc_info=True
-            )
+            logger.info(
+                "%s :: Failed | Error: %s",LOG_PREFIX,str(e),exc_info=True)
 
 
     def fetchAPIResponsesInParallel(self, events: Dict[str, Event]) -> tuple:
-        """
-        Fetch API responses for all events in parallel using ThreadPoolExecutor.
-
-        Args:
-            events: Dict mapping eventSlug -> Event POJO
-
-        Returns:
-            tuple: (apiResponses dict, eventsSucceeded count, eventsFailed count)
-        """
         apiResponses: Dict[str, PolymarketEventResponse] = {}
         responseLock = threading.Lock()
         eventsSucceeded = 0
@@ -125,9 +115,9 @@ class UpdateEventsAndMarketsScheduler:
                 except Exception as e:
                     with statsLock:
                         eventsFailed += 1
-                    logger.info("UPDATE_EVENTS_AND_MARKETS_SCHEDULER :: Unexpected error | %s | %s",eventSlug,str(e),exc_info=True)
+                    logger.info("%s :: Unexpected error | %s | %s", LOG_PREFIX, eventSlug, str(e), exc_info=True)
 
-        logger.info("UPDATE_EVENTS_AND_MARKETS_SCHEDULER :: API fetch completed with %d successes and %d failures",eventsSucceeded,eventsFailed)
+        logger.info("%s :: API fetch completed with %d successes and %d failures", LOG_PREFIX, eventsSucceeded, eventsFailed)
 
         return apiResponses, eventsSucceeded, eventsFailed
 
@@ -138,14 +128,94 @@ class UpdateEventsAndMarketsScheduler:
             if apiResponse:
                 return apiResponse, True
             else:
-                logger.info("UPDATE_EVENTS_AND_MARKETS_SCHEDULER :: No API response | %s",eventSlug)
+                logger.info("%s :: No API response | %s", LOG_PREFIX, eventSlug)
                 return None, False
 
         except Exception as e:
-            logger.info("UPDATE_EVENTS_AND_MARKETS_SCHEDULER :: API fetch failed | %s | %s",eventSlug,str(e),exc_info=True)
+            logger.info("%s :: API fetch failed | %s | %s", LOG_PREFIX, eventSlug, str(e), exc_info=True)
             return None, False
 
         finally:
             # Close database connection for this thread to prevent connection exhaustion
             connection.close()
+
+    @staticmethod
+    def setCategory() -> None:
+        try:
+            logger.info("%s :: Category extraction :: Started", LOG_PREFIX)
+            
+            # Fetch all events where category is null
+            events = EventModel.objects.filter(category__isnull=True)
+            totalCount = events.count()
+            
+            if totalCount == 0:
+                logger.info("%s :: Category extraction :: No events with null category found", LOG_PREFIX)
+                return
+            
+            logger.info("%s :: Category extraction :: Found %d events with null category", LOG_PREFIX, totalCount)
+            
+            updatedCount = 0
+            othersCount = 0
+            
+            # Process events in batches
+            batchSize = 10000
+            eventsToUpdate = []
+            
+            for event in events:
+                category = UpdateEventsAndMarketsScheduler.extractCategoryFromTags(event.tags)
+                
+                if category:
+                    event.category = category
+                    eventsToUpdate.append(event)
+                    updatedCount += 1
+                    
+                    if category == EventCategory.OTHERS.value:
+                        othersCount += 1
+                
+                # Bulk update in batches
+                if len(eventsToUpdate) >= batchSize:
+                    EventCategoryHandler.bulkUpdateCategories(eventsToUpdate)
+                    eventsToUpdate = []
+            
+            # Update remaining events
+            if eventsToUpdate:
+                EventCategoryHandler.bulkUpdateCategories(eventsToUpdate)
+            
+            logger.info("%s :: Category extraction :: Completed | Processed: %d | Updated: %d | Others: %d",
+                LOG_PREFIX,
+                totalCount,
+                updatedCount,
+                othersCount
+            )
+            
+        except Exception as e:
+            logger.info("%s :: Category extraction :: Failed | Error: %s",
+                LOG_PREFIX,
+                str(e),
+                exc_info=True
+            )
+
+    @staticmethod
+    def extractCategoryFromTags(tags) -> str:
+        if not tags or not isinstance(tags, list):
+            return EventCategory.OTHERS.value
+        
+        # Extract valid labels and find first matching non-OTHERS category
+        valid_labels = (
+            tag.get('label') 
+            for tag in tags 
+            if isinstance(tag, dict) and tag.get('label')
+        )
+        
+        # Return first matching category, or OTHERS if none found
+        matching_category = next(
+            (
+                category 
+                for label in valid_labels 
+                if (category := EventCategory.findCategoryFromTags(label)) != EventCategory.OTHERS.value
+            ),
+            EventCategory.OTHERS.value
+        )
+        
+        return matching_category
 

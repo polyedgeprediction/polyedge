@@ -3,8 +3,9 @@ Wallet PnL Scheduler - Orchestrates periodic PnL calculations for all wallets.
 Production-grade scheduler with optimized bulk data loading and parallel processing.
 """
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from datetime import datetime, timezone
+from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from django.db import transaction, connection
@@ -117,6 +118,21 @@ class WalletPnlScheduler:
 
     @transaction.atomic
     def persistPnlData(self, wallet: Wallet, periodDays: int,result: PnlCalculationResult) -> None:
+        # Calculate winrates
+        realizedWinrate, realizedWinrateOdds = self.calculateWinrate(
+            result.realizedWins,
+            result.realizedLosses
+        )
+        unrealizedWinrate, unrealizedWinrateOdds = self.calculateWinrate(
+            result.unrealizedWins,
+            result.unrealizedLosses
+        )
+        # High volume winrate - for now, use same as realized (can be customized later)
+        highVolumeWinrate, highVolumeWinrateOdds = self.calculateWinrate(
+            result.realizedWins,
+            result.realizedLosses
+        )
+        
         WalletPnl.objects.update_or_create(
             wallet=wallet,
             period=periodDays,
@@ -132,8 +148,36 @@ class WalletPnlScheduler:
                 'totalinvestedamount': result.totalInvestedAmount,
                 'totalamountout': result.totalAmountOut,
                 'currentvalue': result.totalCurrentValue,
+                'realizedwinrateodds': realizedWinrateOdds,
+                'realizedwinrate': realizedWinrate,
+                'unrealizedwinrateodds': unrealizedWinrateOdds,
+                'unrealizedwinrate': unrealizedWinrate,
+                'highvolumewinrateodds': highVolumeWinrateOdds,
+                'highvolumewinrate': highVolumeWinrate
             }
         )
+
+    @staticmethod
+    def calculateWinrate(wins: int, losses: int) -> Tuple[Optional[Decimal], Optional[str]]:
+        """
+        Calculate winrate decimal and odds string.
+        
+        Args:
+            wins: Number of wins
+            losses: Number of losses
+            
+        Returns:
+            Tuple of (winrateDecimal, winrateOddsString)
+            Both are None if no bets (wins + losses = 0)
+        """
+        totalBets = wins + losses
+        if totalBets == 0:
+            return None, None
+            
+        winrateDecimal = Decimal(str(wins)) / Decimal(str(totalBets))
+        winrateOdds = f"{wins}/{totalBets}"
+        
+        return winrateDecimal, winrateOdds
 
     def logSuccess(self, wallet: Wallet, periodDays: int,
                    result: PnlCalculationResult) -> None:

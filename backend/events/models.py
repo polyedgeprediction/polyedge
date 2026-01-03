@@ -106,6 +106,14 @@ class Event(models.Model):
         help_text="Event tags in JSON format"
     )
 
+    # Category
+    category = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Event category"
+    )
+
     class Meta:
         db_table = 'events'
         verbose_name = 'Event'
