@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { RefreshCw, AlertCircle, ServerOff, WifiOff, ChevronLeft, ChevronRight, Copy, Check, Search, Calendar as CalendarIcon, X, BarChart3 } from 'lucide-react'
+import { RefreshCw, AlertCircle, ServerOff, WifiOff, ChevronLeft, ChevronRight, Copy, Check, Search, Calendar as CalendarIcon, X, ChevronDown, Users, TrendingUp, DollarSign } from 'lucide-react'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from 'recharts'
 import { format, addDays } from 'date-fns'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -19,6 +27,8 @@ import { reports } from '@/lib/api'
 import type {
   SmartMoneyConcentrationResponse,
   SmartMoneyConcentrationRequest,
+  MarketLevelsResponse,
+  MarketLevelsOutcome,
 } from '@/types'
 
 const CATEGORIES = [
@@ -59,8 +69,35 @@ function getErrorType(error: string): ErrorType {
   return 'generic'
 }
 
+// Chart colors following design system
+const CHART_COLORS = {
+  Yes: '#22c55e', // profit green
+  No: '#ef4444',  // loss red
+  default: '#3b82f6', // accent blue
+}
+
+const getOutcomeColor = (outcome: string): string => {
+  const upper = outcome.toUpperCase()
+  if (upper === 'YES') return CHART_COLORS.Yes
+  if (upper === 'NO') return CHART_COLORS.No
+  return CHART_COLORS.default
+}
+
+// Format Y-axis values
+const formatYAxis = (value: number): string => {
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`
+  if (value >= 1e3) return `$${(value / 1e3).toFixed(0)}K`
+  return `$${value}`
+}
+
+// Levels data state type
+interface LevelsState {
+  loading: boolean
+  error: string | null
+  data: MarketLevelsResponse | null
+}
+
 export default function SmartMoney() {
-  const navigate = useNavigate()
   
   // State
   const [data, setData] = useState<SmartMoneyConcentrationResponse | null>(null)
@@ -84,6 +121,57 @@ export default function SmartMoney() {
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Expanded levels state
+  const [expandedMarketId, setExpandedMarketId] = useState<number | null>(null)
+  const [levelsData, setLevelsData] = useState<Record<number, LevelsState>>({})
+
+  // Toggle levels dropdown
+  const toggleLevels = useCallback(async (marketId: number) => {
+    if (expandedMarketId === marketId) {
+      // Collapse if already expanded
+      setExpandedMarketId(null)
+      return
+    }
+
+    // Expand this row
+    setExpandedMarketId(marketId)
+
+    // If we already have data for this market, don't refetch
+    if (levelsData[marketId]?.data) {
+      return
+    }
+
+    // Fetch levels data
+    setLevelsData(prev => ({
+      ...prev,
+      [marketId]: { loading: true, error: null, data: null }
+    }))
+
+    try {
+      const response = await reports.marketLevels(marketId)
+      if (response.success) {
+        setLevelsData(prev => ({
+          ...prev,
+          [marketId]: { loading: false, error: null, data: response }
+        }))
+      } else {
+        setLevelsData(prev => ({
+          ...prev,
+          [marketId]: { loading: false, error: response.errorMessage || 'Failed to load levels', data: null }
+        }))
+      }
+    } catch (err) {
+      let errorMessage = 'Failed to fetch levels'
+      if (err instanceof Error) {
+        errorMessage = err.message
+      }
+      setLevelsData(prev => ({
+        ...prev,
+        [marketId]: { loading: false, error: errorMessage, data: null }
+      }))
+    }
+  }, [expandedMarketId, levelsData])
 
   // Compute date range based on selected option
   const getDateRange = useCallback(() => {
@@ -575,7 +663,8 @@ export default function SmartMoney() {
                 </thead>
                 <tbody className="divide-y divide-border-subtle">
                   {paginatedMarkets.map((market) => (
-                      <tr key={market.marketsId} className="hover:bg-elevated/50 transition-colors group">
+                      <React.Fragment key={market.marketsId}>
+                        <tr className="hover:bg-elevated/50 transition-colors group">
                           <td className="py-3 px-4">
                             <div className="max-w-md">
                               <div className="flex items-center gap-2">
@@ -634,14 +723,185 @@ export default function SmartMoney() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 w-7 p-0 hover:bg-accent/10"
-                              onClick={() => navigate(`/app/reports/smartmoney/concentration/market/${market.marketsId}/levels`)}
-                              title="View buying levels"
+                              className={`h-7 w-7 p-0 hover:bg-accent/10 transition-transform ${expandedMarketId === market.marketsId ? 'rotate-180' : ''}`}
+                              onClick={() => toggleLevels(market.marketsId)}
+                              title={expandedMarketId === market.marketsId ? "Hide buying levels" : "View buying levels"}
                             >
-                              <BarChart3 className="w-4 h-4 text-accent" />
+                              <ChevronDown className="w-4 h-4 text-accent" />
                             </Button>
                           </td>
                         </tr>
+                        {/* Expanded Levels Row */}
+                        {expandedMarketId === market.marketsId && (
+                          <tr>
+                            <td colSpan={7} className="p-0">
+                              <div className="bg-elevated/30 border-t border-b border-border-subtle">
+                                {/* Loading State */}
+                                {levelsData[market.marketsId]?.loading && (
+                                  <div className="flex items-center justify-center py-8">
+                                    <RefreshCw className="w-5 h-5 animate-spin text-muted" />
+                                    <span className="ml-2 text-sm text-muted">Loading levels...</span>
+                                  </div>
+                                )}
+
+                                {/* Error State */}
+                                {levelsData[market.marketsId]?.error && (
+                                  <div className="flex items-center justify-center py-8 text-loss">
+                                    <AlertCircle className="w-5 h-5" />
+                                    <span className="ml-2 text-sm">{levelsData[market.marketsId].error}</span>
+                                  </div>
+                                )}
+
+                                {/* Levels Data */}
+                                {levelsData[market.marketsId]?.data && (() => {
+                                  const levelsInfo = levelsData[market.marketsId].data!
+                                  const outcomesWithInvestment = levelsInfo.outcomes.filter(o => o.totalAmountInvested > 0)
+                                  const outcomeChartData = outcomesWithInvestment.map((outcome: MarketLevelsOutcome) => ({
+                                    outcome: outcome.outcome,
+                                    data: outcome.levels.map(level => ({
+                                      rangeLabel: level.rangeLabel,
+                                      totalAmountInvested: level.totalAmountInvested,
+                                    }))
+                                  }))
+
+                                  return (
+                                    <div className="p-4">
+                                      {/* Summary Stats */}
+                                      <div className="grid grid-cols-3 gap-4 mb-4">
+                                        <div className="bg-surface border border-border-subtle rounded-lg p-3">
+                                          <div className="flex items-center gap-2 text-muted mb-1">
+                                            <Users className="w-3.5 h-3.5" />
+                                            <span className="text-xs">Total Wallets</span>
+                                          </div>
+                                          <div className="text-lg font-semibold font-mono tabular-nums text-primary">
+                                            {levelsInfo.summary.totalWalletCount}
+                                          </div>
+                                        </div>
+                                        <div className="bg-surface border border-border-subtle rounded-lg p-3">
+                                          <div className="flex items-center gap-2 text-muted mb-1">
+                                            <TrendingUp className="w-3.5 h-3.5" />
+                                            <span className="text-xs">Total Positions</span>
+                                          </div>
+                                          <div className="text-lg font-semibold font-mono tabular-nums text-primary">
+                                            {levelsInfo.summary.totalPositionCount}
+                                          </div>
+                                        </div>
+                                        <div className="bg-surface border border-border-subtle rounded-lg p-3">
+                                          <div className="flex items-center gap-2 text-muted mb-1">
+                                            <DollarSign className="w-3.5 h-3.5" />
+                                            <span className="text-xs">Total Invested</span>
+                                          </div>
+                                          <div className="text-lg font-semibold font-mono tabular-nums text-primary">
+                                            {formatCurrencyCompact(levelsInfo.summary.totalAmountInvested)}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Charts */}
+                                      {outcomeChartData.length > 0 ? (
+                                        <div className={`grid gap-4 ${outcomeChartData.length === 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
+                                          {outcomeChartData.map((outcomeChart) => {
+                                            const outcome = outcomesWithInvestment.find(o => o.outcome === outcomeChart.outcome)!
+                                            return (
+                                              <div key={outcomeChart.outcome} className="bg-surface border border-border-subtle rounded-lg p-4">
+                                                <div className="flex items-center justify-between mb-3">
+                                                  <span
+                                                    className="text-sm font-medium"
+                                                    style={{ color: getOutcomeColor(outcomeChart.outcome) }}
+                                                  >
+                                                    {outcomeChart.outcome}
+                                                  </span>
+                                                  <div className="flex items-center gap-3 text-xs text-muted">
+                                                    <span>{outcome.totalWalletCount} wallets</span>
+                                                    <span>{outcome.totalPositionCount} positions</span>
+                                                    <span className="font-mono tabular-nums">
+                                                      {formatCurrencyCompact(outcome.totalAmountInvested)}
+                                                    </span>
+                                                  </div>
+                                                </div>
+                                                <div className="h-[200px] w-full">
+                                                  <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart
+                                                      data={outcomeChart.data}
+                                                      margin={{ top: 10, right: 10, left: 10, bottom: 10 }}
+                                                    >
+                                                      <XAxis
+                                                        dataKey="rangeLabel"
+                                                        stroke="#71717a"
+                                                        fontSize={10}
+                                                        tickLine={false}
+                                                        axisLine={false}
+                                                        tick={{ fill: '#a1a1aa' }}
+                                                      />
+                                                      <YAxis
+                                                        stroke="#71717a"
+                                                        fontSize={10}
+                                                        tickLine={false}
+                                                        axisLine={false}
+                                                        tickFormatter={formatYAxis}
+                                                        tick={{ fill: '#a1a1aa' }}
+                                                        width={50}
+                                                      />
+                                                      <Tooltip
+                                                        content={({ active, payload, label }) => {
+                                                          if (!active || !payload || payload.length === 0) return null
+                                                          return (
+                                                            <div className="bg-surface border border-border-subtle rounded-lg p-2 shadow-lg">
+                                                              <p className="text-xs text-muted mb-1">Price Range: {label}</p>
+                                                              <div className="flex items-center justify-between gap-3">
+                                                                <span
+                                                                  className="text-xs font-medium"
+                                                                  style={{ color: getOutcomeColor(outcomeChart.outcome) }}
+                                                                >
+                                                                  {outcomeChart.outcome}
+                                                                </span>
+                                                                <span className="text-xs font-mono tabular-nums text-primary">
+                                                                  {formatCurrencyCompact(payload[0].value as number)}
+                                                                </span>
+                                                              </div>
+                                                            </div>
+                                                          )
+                                                        }}
+                                                      />
+                                                      <Bar
+                                                        dataKey="totalAmountInvested"
+                                                        fill={getOutcomeColor(outcomeChart.outcome)}
+                                                        radius={[4, 4, 0, 0]}
+                                                        maxBarSize={40}
+                                                      >
+                                                        {outcomeChart.data.map((_, index) => (
+                                                          <Cell
+                                                            key={`cell-${index}`}
+                                                            fill={getOutcomeColor(outcomeChart.outcome)}
+                                                            fillOpacity={0.85}
+                                                          />
+                                                        ))}
+                                                      </Bar>
+                                                    </BarChart>
+                                                  </ResponsiveContainer>
+                                                </div>
+                                              </div>
+                                            )
+                                          })}
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center justify-center py-6 text-muted text-sm">
+                                          No position data available
+                                        </div>
+                                      )}
+
+                                      {/* Execution time */}
+                                      <div className="text-xs text-muted text-right mt-3">
+                                        Loaded in {levelsInfo.executionTimeSeconds.toFixed(3)}s
+                                      </div>
+                                    </div>
+                                  )
+                                })()}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                 </tbody>
               </table>
