@@ -780,12 +780,9 @@ export default function SmartMoney() {
                                                   >
                                                     {outcomeChart.outcome}
                                                   </span>
-                                                  <div className="flex items-center gap-3 text-xs text-muted">
-                                                    <span>{outcome.totalWalletCount} wallets</span>
-                                                    <span>{outcome.totalPositionCount} positions</span>
-                                                    <span className="font-mono tabular-nums">
-                                                      {formatCurrencyCompact(outcome.totalAmountInvested)}
-                                                    </span>
+                                                  <div className="flex items-center gap-1.5 text-sm font-mono">
+                                                    <span className="text-primary tabular-nums">{formatCurrencyCompact(outcome.totalAmountInvested)}</span>
+                                                    <span className="text-primary">[{outcome.totalWalletCount}]</span>
                                                   </div>
                                                 </div>
                                                 <div className="h-[200px] w-full">
