@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
+from reports.utils.FormatUtils import format_money
+
 
 @dataclass
 class OutcomePosition:
@@ -29,7 +31,9 @@ class OutcomePosition:
             'avg_price': float(self.avgPrice),
             'position_type': self.positionType,
             'amount_spent': float(self.amountSpent),
+            'amount_spent_formatted': format_money(self.amountSpent),
             'total_shares': float(self.totalShares),
             'current_shares': float(self.currentShares),
-            'amount_remaining': float(self.amountRemaining)
+            'amount_remaining': float(self.amountRemaining),
+            'amount_remaining_formatted': format_money(self.amountRemaining)
         }

@@ -25,6 +25,7 @@ from reports.pojos.marketreport.MarketReportResponse import MarketReportResponse
 from reports.pojos.marketreport.WalletPosition import WalletPosition
 from reports.pojos.marketreport.OutcomePosition import OutcomePosition
 from reports.pojos.marketreport.PnlRange import PnlRange
+from reports.utils.FormatUtils import format_money
 from markets.models import Market
 from markets.implementations.polymarket.MarketsAPI import MarketsAPI
 
@@ -160,16 +161,26 @@ class MarketReportGenerator:
 
         # Add API data if available
         if apiData:
+            liquidity = float(apiData.get('liquidity', 0))
+            volume = float(apiData.get('volume', 0))
+
             marketInfo['description'] = apiData.get('description', '')
-            marketInfo['liquidity'] = float(apiData.get('liquidity', 0))
-            marketInfo['volume'] = float(apiData.get('volume', 0))
+            marketInfo['liquidity'] = liquidity
+            marketInfo['liquidity_formatted'] = format_money(liquidity)
+            marketInfo['volume'] = volume
+            marketInfo['volume_formatted'] = format_money(volume)
             marketInfo['start_date'] = apiData.get('startDateIso')
             marketInfo['end_date'] = apiData.get('endDateIso')
         else:
             # Fallback to DB data
+            liquidity = float(market.liquidity)
+            volume = float(market.volume)
+
             marketInfo['description'] = ''
-            marketInfo['liquidity'] = float(market.liquidity)
-            marketInfo['volume'] = float(market.volume)
+            marketInfo['liquidity'] = liquidity
+            marketInfo['liquidity_formatted'] = format_money(liquidity)
+            marketInfo['volume'] = volume
+            marketInfo['volume_formatted'] = format_money(volume)
             marketInfo['start_date'] = market.startdate.isoformat() if market.startdate else None
             marketInfo['end_date'] = market.enddate.isoformat() if market.enddate else None
 

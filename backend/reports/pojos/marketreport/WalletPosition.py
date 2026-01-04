@@ -8,6 +8,7 @@ from typing import List
 
 from reports.pojos.marketreport.OutcomePosition import OutcomePosition
 from reports.pojos.marketreport.PnlRange import PnlRange
+from reports.utils.FormatUtils import format_money, format_percentage
 
 
 @dataclass
@@ -45,10 +46,15 @@ class WalletPosition:
                 'proxy_wallet': self.proxyWallet,
                 'pnl': {
                     'calculated_amount_invested': float(self.calculatedAmountInvested),
+                    'calculated_amount_invested_formatted': format_money(self.calculatedAmountInvested),
                     'calculated_amount_out': float(self.calculatedAmountOut),
+                    'calculated_amount_out_formatted': format_money(self.calculatedAmountOut),
                     'calculated_current_value': float(self.calculatedCurrentValue),
+                    'calculated_current_value_formatted': format_money(self.calculatedCurrentValue),
                     'pnl': float(self.pnl),
+                    'pnl_formatted': format_money(self.pnl),
                     'pnl_percentage': float(self.pnlPercentage),
+                    'pnl_percentage_formatted': format_percentage(self.pnlPercentage),
                     'pnl_ranges': [pnlRange.toDict() for pnlRange in self.pnlRanges]
                 },
                 'outcomes': [outcome.toDict() for outcome in self.outcomes]

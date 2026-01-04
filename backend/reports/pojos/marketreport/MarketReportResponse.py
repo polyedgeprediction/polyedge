@@ -8,6 +8,7 @@ from decimal import Decimal
 from datetime import datetime
 
 from reports.pojos.marketreport.WalletPosition import WalletPosition
+from reports.utils.FormatUtils import format_money
 
 
 @dataclass
@@ -58,8 +59,11 @@ class MarketReportResponse:
             'summary': {
                 'total_wallets': self.totalWallets,
                 'total_invested': float(self.totalInvested),
+                'total_invested_formatted': format_money(self.totalInvested),
                 'total_current_value': float(self.totalCurrentValue),
-                'total_pnl': float(self.totalPnl)
+                'total_current_value_formatted': format_money(self.totalCurrentValue),
+                'total_pnl': float(self.totalPnl),
+                'total_pnl_formatted': format_money(self.totalPnl)
             },
             'execution_time_seconds': round(self.executionTimeSeconds, 3)
         }
