@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Optional, List
 from datetime import datetime
 from dateutil import parser as date_parser
+from markets.pojos.Event import Event
 
 
 @dataclass
@@ -97,6 +98,8 @@ class PolymarketMarketResponse:
     rfqEnabled: bool
     holdingRewardsEnabled: bool
     feesEnabled: bool
+    requiresTranslation: bool
+    events: List[Event]
 
     @staticmethod
     def _parseDate(dateStr: Optional[str]) -> Optional[datetime]:
@@ -152,6 +155,12 @@ class PolymarketMarketResponse:
         outcomePrices = PolymarketMarketResponse._parseList(data.get('outcomePrices', []))
         clobTokenIds = PolymarketMarketResponse._parseList(data.get('clobTokenIds', []))
         umaResolutionStatuses = PolymarketMarketResponse._parseList(data.get('umaResolutionStatuses', []))
+
+        # Parse events
+        events = []
+        eventsData = data.get('events', [])
+        if isinstance(eventsData, list):
+            events = [Event.fromAPIResponse(eventData) for eventData in eventsData]
         
         return PolymarketMarketResponse(
             id=str(data.get('id', '')),
@@ -236,6 +245,8 @@ class PolymarketMarketResponse:
             deployingTimestamp=deployingTimestamp,
             rfqEnabled=data.get('rfqEnabled', False),
             holdingRewardsEnabled=data.get('holdingRewardsEnabled', False),
-            feesEnabled=data.get('feesEnabled', False)
+            feesEnabled=data.get('feesEnabled', False),
+            requiresTranslation=data.get('requiresTranslation', False),
+            events=events
         )
 

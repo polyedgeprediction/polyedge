@@ -9,4 +9,5 @@ class RateLimiterType(Enum):
     POSITIONS = "positions"
     CLOSED_POSITIONS = "closed_positions"
     TRADES = "trades"
+    MARKETS = "markets"
     GENERAL = "general"
