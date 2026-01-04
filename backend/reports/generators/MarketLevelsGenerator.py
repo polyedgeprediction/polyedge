@@ -35,38 +35,28 @@ class MarketLevelsGenerator:
 
     @staticmethod
     def generate(request: MarketLevelsRequest) -> MarketLevelsResponse:
-        """
-        Generate the market levels report.
-        
-        Args:
-            request: Report request with market ID
-            
-        Returns:
-            MarketLevelsResponse with aggregated level data
-        """
         startTime = time.time()
         
         try:
             # Step 1: Validate request
-            validationError = MarketLevelsGenerator._validateRequest(request)
+            validationError = MarketLevelsGenerator.validateRequest(request)
             if validationError:
                 return MarketLevelsResponse.error(validationError)
             
             # Step 2: Fetch position data
-            positions = MarketLevelsGenerator._fetchPositions(request.marketId)
+            positions = MarketLevelsGenerator.fetchPositions(request.marketId)
             
             # Step 3: Handle empty results
             if not positions:
-                return MarketLevelsGenerator._buildEmptyResponse(request, startTime)
+                return MarketLevelsGenerator.buildEmptyResponse(request, startTime)
             
             # Step 4: Aggregate by outcome and price range
-            response = MarketLevelsGenerator._aggregatePositions(positions)
+            response = MarketLevelsGenerator.aggregatePositions(positions)
             
             # Step 5: Set execution time and return
             response.executionTimeSeconds = time.time() - startTime
             
-            logger.info(
-                "%s :: Generated | MarketId: %d | Outcomes: %d | Positions: %d | Time: %.3fs",
+            logger.info("%s :: Generated | MarketId: %d | Outcomes: %d | Positions: %d | Time: %.3fs",
                 LOG_PREFIX,
                 request.marketId,
                 len(response.outcomes),
@@ -77,18 +67,12 @@ class MarketLevelsGenerator:
             return response
             
         except Exception as e:
-            return MarketLevelsGenerator._handleError(e, startTime)
+            return MarketLevelsGenerator.handleError(e, startTime)
 
     # ==================== Validation ====================
     
     @staticmethod
-    def _validateRequest(request: MarketLevelsRequest) -> Optional[str]:
-        """
-        Validate request parameters.
-        
-        Returns:
-            Error message if invalid, None if valid
-        """
+    def validateRequest(request: MarketLevelsRequest) -> Optional[str]:
         isValid, errorMessage = request.validate()
         if not isValid:
             logger.info("%s :: Invalid request: %s", LOG_PREFIX, errorMessage)
@@ -100,14 +84,13 @@ class MarketLevelsGenerator:
     # ==================== Data Fetching ====================
     
     @staticmethod
-    def _fetchPositions(marketId: int) -> List[Dict]:
-        """Fetch position data from query."""
+    def fetchPositions(marketId: int) -> List[Dict]:
         return MarketLevelsQuery.execute(marketId)
 
     # ==================== Aggregation ====================
     
     @staticmethod
-    def _aggregatePositions(positions: List[Dict]) -> MarketLevelsResponse:
+    def aggregatePositions(positions: List[Dict]) -> MarketLevelsResponse:
         """
         Aggregate positions by outcome and price range.
         
@@ -151,7 +134,7 @@ class MarketLevelsGenerator:
     # ==================== Response Building ====================
     
     @staticmethod
-    def _buildEmptyResponse(
+    def buildEmptyResponse(
         request: MarketLevelsRequest,
         startTime: float
     ) -> MarketLevelsResponse:
@@ -188,7 +171,7 @@ class MarketLevelsGenerator:
     # ==================== Error Handling ====================
     
     @staticmethod
-    def _handleError(error: Exception, startTime: float) -> MarketLevelsResponse:
+    def handleError(error: Exception, startTime: float) -> MarketLevelsResponse:
         """Handle and log generation errors."""
         executionTime = time.time() - startTime
         logger.exception(

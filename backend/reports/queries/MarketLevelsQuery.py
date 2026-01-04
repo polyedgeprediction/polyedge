@@ -26,15 +26,6 @@ class MarketLevelsQuery:
     
     @staticmethod
     def execute(marketId: int) -> List[Dict]:
-        """
-        Execute query to fetch positions for a market.
-        
-        Args:
-            marketId: The market ID to query
-            
-        Returns:
-            List of position dictionaries
-        """
         query = """
             SELECT 
                 p.positionid,
@@ -61,16 +52,14 @@ class MarketLevelsQuery:
                 columns = [col[0] for col in cursor.description]
                 results = [dict(zip(columns, row)) for row in cursor.fetchall()]
             
-            logger.info(
-                "%s :: Query executed | MarketId: %d | Positions: %d",
+            logger.info("%s :: Query executed | MarketId: %d | Positions: %d",
                 LOG_PREFIX, marketId, len(results)
             )
             
             return results
             
         except Exception as e:
-            logger.exception(
-                "%s :: Query failed | MarketId: %d | Error: %s",
+            logger.info("%s :: Query failed | MarketId: %d | Error: %s",
                 LOG_PREFIX, marketId, str(e)
             )
             raise
