@@ -42,14 +42,14 @@ class WalletPosition:
         """Convert to dictionary for API response."""
         return {
             'wallet': {
-                'proxyWallet': self.proxyWallet,
+                'proxy_wallet': self.proxyWallet,
                 'pnl': {
-                    'calculatedAmountInvested': float(self.calculatedAmountInvested),
-                    'calculatedAmountOut': float(self.calculatedAmountOut),
-                    'calculatedCurrentValue': float(self.calculatedCurrentValue),
+                    'calculated_amount_invested': float(self.calculatedAmountInvested),
+                    'calculated_amount_out': float(self.calculatedAmountOut),
+                    'calculated_current_value': float(self.calculatedCurrentValue),
                     'pnl': float(self.pnl),
-                    'pnlPercentage': float(self.pnlPercentage),
-                    'pnlRanges': [pnlRange.toDict() for pnlRange in self.pnlRanges]
+                    'pnl_percentage': float(self.pnlPercentage),
+                    'pnl_ranges': [pnlRange.toDict() for pnlRange in self.pnlRanges]
                 },
                 'outcomes': [outcome.toDict() for outcome in self.outcomes]
             }

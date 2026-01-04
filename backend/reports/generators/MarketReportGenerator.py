@@ -153,9 +153,9 @@ class MarketReportGenerator:
         """Build market information dictionary from DB and API data."""
         marketInfo = {
             'question': market.question,
-            'startDate': market.startdate.isoformat() if market.startdate else None,
-            'endDate': market.enddate.isoformat() if market.enddate else None,
-            'marketSlug': market.marketslug
+            'start_date': market.startdate.isoformat() if market.startdate else None,
+            'end_date': market.enddate.isoformat() if market.enddate else None,
+            'market_slug': market.marketslug
         }
 
         # Add API data if available

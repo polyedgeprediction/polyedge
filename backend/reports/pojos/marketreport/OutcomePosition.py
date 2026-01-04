@@ -25,11 +25,11 @@ class OutcomePosition:
         """Convert to dictionary for API response."""
         return {
             'outcome': self.outcome,
-            'currentPrice': float(self.currentPrice),
-            'avgPrice': float(self.avgPrice),
-            'positionType': self.positionType,
-            'amountSpent': float(self.amountSpent),
-            'totalShares': float(self.totalShares),
-            'currentShares': float(self.currentShares),
-            'amountRemaining': float(self.amountRemaining)
+            'current_price': float(self.currentPrice),
+            'avg_price': float(self.avgPrice),
+            'position_type': self.positionType,
+            'amount_spent': float(self.amountSpent),
+            'total_shares': float(self.totalShares),
+            'current_shares': float(self.currentShares),
+            'amount_remaining': float(self.amountRemaining)
         }

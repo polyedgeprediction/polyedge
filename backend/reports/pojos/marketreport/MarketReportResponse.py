@@ -52,16 +52,16 @@ class MarketReportResponse:
         """Convert to dictionary for API response."""
         return {
             'success': self.success,
-            'errorMessage': self.errorMessage,
+            'error_message': self.errorMessage,
             'market': self.market,
             'wallets': [wallet.toDict() for wallet in self.wallets],
             'summary': {
-                'totalWallets': self.totalWallets,
-                'totalInvested': float(self.totalInvested),
-                'totalCurrentValue': float(self.totalCurrentValue),
-                'totalPnl': float(self.totalPnl)
+                'total_wallets': self.totalWallets,
+                'total_invested': float(self.totalInvested),
+                'total_current_value': float(self.totalCurrentValue),
+                'total_pnl': float(self.totalPnl)
             },
-            'executionTimeSeconds': round(self.executionTimeSeconds, 3)
+            'execution_time_seconds': round(self.executionTimeSeconds, 3)
         }
 
     @classmethod

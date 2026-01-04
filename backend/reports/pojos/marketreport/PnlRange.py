@@ -24,8 +24,8 @@ class PnlRange:
         return {
             'range': self.range,
             'pnl': float(self.pnl),
-            'realizedWinRate': float(self.realizedWinRate),
-            'realizedWinRateOdds': self.realizedWinRateOdds,
-            'unrealizedWinRate': float(self.unrealizedWinRate),
-            'unrealizedWinRateOdds': self.unrealizedWinRateOdds
+            'realized_win_rate': float(self.realizedWinRate),
+            'realized_win_rate_odds': self.realizedWinRateOdds,
+            'unrealized_win_rate': float(self.unrealizedWinRate),
+            'unrealized_win_rate_odds': self.unrealizedWinRateOdds
         }
