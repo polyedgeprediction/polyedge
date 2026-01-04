@@ -312,51 +312,54 @@ export default function SmartMoney() {
               {c.label}
             </button>
           ))}
-        </div>
+      </div>
 
         <div className="inline-flex items-center gap-px bg-elevated/50 border border-border-subtle rounded-lg p-1">
           {/* Period - compact */}
-          <Select
-            value={pnlPeriod.toString()}
-            onValueChange={(v) => setPnlPeriod(parseInt(v) as 30 | 60 | 90)}
-          >
-            <SelectTrigger className="h-7 px-2 text-xs bg-transparent border-0 shadow-none focus:ring-0 gap-0.5 w-[80px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PERIODS.map((p) => (
-                <SelectItem key={p.value} value={p.value}>
-                  {p.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-1.5 px-2">
+            <span className="text-xs text-muted whitespace-nowrap">PNL Range</span>
+              <Select
+                value={pnlPeriod.toString()}
+                onValueChange={(v) => setPnlPeriod(parseInt(v) as 30 | 60 | 90)}
+              >
+              <SelectTrigger className="h-7 px-2 text-xs bg-transparent border-0 shadow-none focus:ring-0 gap-0.5 w-[80px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PERIODS.map((p) => (
+                    <SelectItem key={p.value} value={p.value}>
+                      {p.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
           <div className="w-px h-4 bg-border-subtle" />
 
           <div className="flex items-center gap-1.5 px-2">
-            <span className="text-xs text-muted whitespace-nowrap">PnL ≥</span>
-            <Input
-              type="number"
-              value={minWalletPnl}
-              onChange={(e) => setMinWalletPnl(parseInt(e.target.value) || 0)}
+            <span className="text-xs text-muted whitespace-nowrap">PNL</span>
+              <Input
+                type="number"
+                value={minWalletPnl}
+                onChange={(e) => setMinWalletPnl(parseInt(e.target.value) || 0)}
               className="w-24 h-7 px-2 text-xs bg-surface border-border-subtle [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              min={0}
-            />
-          </div>
+                min={0}
+              />
+            </div>
 
           <div className="w-px h-4 bg-border-subtle" />
 
           <div className="flex items-center gap-1.5 px-2">
-            <span className="text-xs text-muted whitespace-nowrap">Inv ≥</span>
-            <Input
-              type="number"
-              value={minInvestmentAmount}
-              onChange={(e) => setMinInvestmentAmount(parseInt(e.target.value) || 0)}
+            <span className="text-xs text-muted whitespace-nowrap">Min Investment</span>
+              <Input
+                type="number"
+                value={minInvestmentAmount}
+                onChange={(e) => setMinInvestmentAmount(parseInt(e.target.value) || 0)}
               className="w-24 h-7 px-2 text-xs bg-surface border-border-subtle [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              min={0}
-            />
-          </div>
+                min={0}
+              />
+            </div>
 
           <div className="w-px h-4 bg-border-subtle" />
 
@@ -365,7 +368,7 @@ export default function SmartMoney() {
             <PopoverTrigger asChild>
               <button className="flex items-center gap-1.5 h-7 px-2 text-xs hover:bg-surface/50 rounded-md transition-colors">
                 <CalendarIcon className="w-3.5 h-3.5 text-muted" />
-                <span className="text-xs text-muted">Ends:</span>
+                <span className="text-xs text-muted">End Date</span>
                 <span className={`text-xs ${endDateOption === 'all' ? 'text-muted' : 'text-secondary'}`}>
                   {endDateOption === 'all' && 'All'}
                   {endDateOption === '30' && '30d'}
@@ -401,8 +404,8 @@ export default function SmartMoney() {
                       {opt.label}
                     </button>
                   ))}
-                </div>
-                
+            </div>
+
                 {endDateOption === 'custom' && (
                   <div className="border-t border-border-subtle pt-2 space-y-2">
                     <div className="flex items-center gap-2">
@@ -441,7 +444,7 @@ export default function SmartMoney() {
                             >
                               <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
                               {customDateTo ? format(customDateTo, 'MMM d, yyyy') : 'Select'}
-                            </Button>
+            </Button>
                           </PopoverTrigger>
                           <PopoverContent className="w-auto p-0" align="start">
                             <Calendar
@@ -645,7 +648,7 @@ export default function SmartMoney() {
                       Outcomes
                     </th>
                     <th className="text-center text-xs font-medium text-muted uppercase tracking-wide py-3 px-4">
-                      Wallets
+                        Wallets
                     </th>
                     <th className="text-right text-xs font-medium text-muted uppercase tracking-wide py-3 px-4">
                       Invested / Out
@@ -673,7 +676,7 @@ export default function SmartMoney() {
                                   onClick={(e) => copyConditionId(e, market.conditionId)}
                                   title="Click to copy condition ID"
                                 >
-                                  {market.question}
+                                {market.question}
                                 </span>
                                 {copiedId === market.conditionId ? (
                                   <Check className="w-3 h-3 text-profit flex-shrink-0" />
@@ -722,7 +725,7 @@ export default function SmartMoney() {
                           <td className="py-3 px-4 text-center">
                             <Button
                               variant="ghost"
-                              size="sm"
+                                  size="sm"
                               className={`h-7 w-7 p-0 hover:bg-accent/10 transition-transform ${expandedMarketId === market.marketsId ? 'rotate-180' : ''}`}
                               onClick={() => toggleLevels(market.marketsId)}
                               title={expandedMarketId === market.marketsId ? "Hide buying levels" : "View buying levels"}
@@ -784,7 +787,7 @@ export default function SmartMoney() {
                                                     <span className="text-primary tabular-nums">{formatCurrencyCompact(outcome.totalAmountInvested)}</span>
                                                     <span className="text-primary">[{outcome.totalWalletCount}]</span>
                                                   </div>
-                                                </div>
+                                </div>
                                                 <div className="h-[200px] w-full">
                                                   <ResponsiveContainer width="100%" height="100%">
                                                     <BarChart
@@ -815,16 +818,16 @@ export default function SmartMoney() {
                                                             <div className="bg-surface border border-border-subtle rounded-lg p-2 shadow-lg">
                                                               <p className="text-xs text-muted mb-1">Price Range: {label}</p>
                                                               <div className="flex items-center justify-between gap-3">
-                                                                <span
+                                        <span
                                                                   className="text-xs font-medium"
                                                                   style={{ color: getOutcomeColor(outcomeChart.outcome) }}
                                                                 >
                                                                   {outcomeChart.outcome}
-                                                                </span>
+                                        </span>
                                                                 <span className="text-xs font-mono tabular-nums text-primary">
                                                                   {formatCurrencyCompact(payload[0].value as number)}
-                                                                </span>
-                                                              </div>
+                                        </span>
+                                      </div>
                                                             </div>
                                                           )
                                                         }}
@@ -846,7 +849,7 @@ export default function SmartMoney() {
                                                     </BarChart>
                                                   </ResponsiveContainer>
                                                 </div>
-                                              </div>
+                                        </div>
                                             )
                                           })}
                                         </div>
