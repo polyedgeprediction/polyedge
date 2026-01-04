@@ -6,9 +6,7 @@ from typing import Optional
 from markets.implementations.polymarket.Constants import (
     POLYMARKET_MARKETS_BASE_URL,
     POLYMARKET_MARKETS_BY_SLUG_ENDPOINT,
-    DEFAULT_TIMEOUT_SECONDS,
-    DEFAULT_MAX_RETRIES,
-    DEFAULT_RETRY_DELAY_SECONDS
+    DEFAULT_TIMEOUT_SECONDS
 )
 from markets.pojos.PolymarketMarketResponse import PolymarketMarketResponse
 from framework.RateLimitedRequestHandler import RateLimitedRequestHandler
@@ -23,23 +21,17 @@ class MarketsAPI:
     Uses production-grade rate limiting with connection pooling.
     """
 
-    def __init__(
-        self,
-        timeout: int = DEFAULT_TIMEOUT_SECONDS,
-        maxRetries: int = DEFAULT_MAX_RETRIES,
-        retryDelay: int = DEFAULT_RETRY_DELAY_SECONDS
-    ):
+    def __init__(self, timeout: int = DEFAULT_TIMEOUT_SECONDS):
         """
         Initialize MarketsAPI client.
 
         Args:
             timeout: Request timeout in seconds
-            maxRetries: Maximum number of retry attempts
-            retryDelay: Delay between retries in seconds
+
+        Note:
+            Retry configuration is handled centrally by RateLimitConfig
         """
         self.timeout = timeout
-        self.maxRetries = maxRetries
-        self.retryDelay = retryDelay
         # Use rate-limited request handler for markets
         self.requestHandler = RateLimitedRequestHandler(
             limiterType=RateLimiterType.MARKETS,

@@ -8,8 +8,6 @@ POLYMARKET_MARKETS_BY_SLUG_ENDPOINT = "/markets/slug"
 
 # Request Configuration
 DEFAULT_TIMEOUT_SECONDS = 30
-DEFAULT_MAX_RETRIES = 3
-DEFAULT_RETRY_DELAY_SECONDS = 2
 
 # Platform identifier
 PLATFORM_NAME = "polymarket"
