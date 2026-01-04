@@ -6,7 +6,8 @@ from typing import Optional
 from markets.implementations.polymarket.Constants import (
     POLYMARKET_MARKETS_BASE_URL,
     POLYMARKET_MARKETS_BY_SLUG_ENDPOINT,
-    DEFAULT_TIMEOUT_SECONDS
+    DEFAULT_TIMEOUT_SECONDS,
+    LOG_PREFIX_MARKETS_API,
 )
 from markets.pojos.PolymarketMarketResponse import PolymarketMarketResponse
 from framework.RateLimitedRequestHandler import RateLimitedRequestHandler
@@ -16,21 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 class MarketsAPI:
-    """
-    Client for fetching market data from Polymarket API.
-    Uses production-grade rate limiting with connection pooling.
-    """
 
     def __init__(self, timeout: int = DEFAULT_TIMEOUT_SECONDS):
-        """
-        Initialize MarketsAPI client.
-
-        Args:
-            timeout: Request timeout in seconds
-
-        Note:
-            Retry configuration is handled centrally by RateLimitConfig
-        """
         self.timeout = timeout
         # Use rate-limited request handler for markets
         self.requestHandler = RateLimitedRequestHandler(
@@ -39,23 +27,11 @@ class MarketsAPI:
         )
 
     def getMarketBySlug(self, marketSlug: str) -> Optional[PolymarketMarketResponse]:
-        """
-        Fetch market details by slug from Polymarket API.
-
-        Args:
-            marketSlug: The market slug identifier
-
-        Returns:
-            PolymarketMarketResponse instance if found, None if not found
-
-        Raises:
-            Exception: If the API request fails with non-404 error
-        """
         url = f"{POLYMARKET_MARKETS_BASE_URL}{POLYMARKET_MARKETS_BY_SLUG_ENDPOINT}/{marketSlug}"
 
         try:
-            logger.info(
-                "MARKETS_API :: Fetching market by slug | Slug: %s",
+            logger.info("%s :: Fetching market by slug | Slug: %s",
+                LOG_PREFIX_MARKETS_API,
                 marketSlug
             )
 
@@ -65,8 +41,8 @@ class MarketsAPI:
                 marketData = response.json()
                 market = PolymarketMarketResponse.fromAPIResponse(marketData)
 
-                logger.info(
-                    "MARKETS_API :: Successfully fetched market | Slug: %s | ID: %s | Question: %s",
+                logger.info("%s :: Successfully fetched market | Slug: %s | ID: %s | Question: %s",
+                    LOG_PREFIX_MARKETS_API,
                     marketSlug,
                     market.id,
                     market.question[:50] + "..." if len(market.question) > 50 else market.question
@@ -75,16 +51,16 @@ class MarketsAPI:
                 return market
 
             elif response.status_code == 404:
-                logger.warning(
-                    "MARKETS_API :: Market not found | Slug: %s",
+                logger.info("%s :: Market not found | Slug: %s",
+                    LOG_PREFIX_MARKETS_API,
                     marketSlug
                 )
                 return None
 
             else:
                 errorMsg = f"Failed to fetch market by slug: Status {response.status_code}"
-                logger.error(
-                    "MARKETS_API :: %s | Slug: %s",
+                logger.info("%s :: %s | Slug: %s",
+                    LOG_PREFIX_MARKETS_API,
                     errorMsg,
                     marketSlug
                 )
@@ -97,8 +73,8 @@ class MarketsAPI:
 
             # Otherwise, log and raise a new exception
             errorMsg = "Failed to fetch market by slug"
-            logger.error(
-                "MARKETS_API :: %s | Slug: %s | Error: %s",
+            logger.info("%s :: %s | Slug: %s | Error: %s",
+                LOG_PREFIX_MARKETS_API,
                 errorMsg,
                 marketSlug,
                 str(e)
