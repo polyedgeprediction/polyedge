@@ -3,9 +3,12 @@ POJO for Polymarket API market response.
 """
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from datetime import datetime
 from dateutil import parser as date_parser
+
+if TYPE_CHECKING:
+    from events.pojos.PolymarketEventResponse import PolymarketEventResponse
 
 
 @dataclass
@@ -97,6 +100,8 @@ class PolymarketMarketResponse:
     rfqEnabled: bool
     holdingRewardsEnabled: bool
     feesEnabled: bool
+    requiresTranslation: bool
+    events: List['PolymarketEventResponse']
 
     @staticmethod
     def _parseDate(dateStr: Optional[str]) -> Optional[datetime]:
@@ -152,6 +157,13 @@ class PolymarketMarketResponse:
         outcomePrices = PolymarketMarketResponse._parseList(data.get('outcomePrices', []))
         clobTokenIds = PolymarketMarketResponse._parseList(data.get('clobTokenIds', []))
         umaResolutionStatuses = PolymarketMarketResponse._parseList(data.get('umaResolutionStatuses', []))
+
+        # Parse events (import here to avoid circular dependency at module load time)
+        events = []
+        eventsData = data.get('events', [])
+        if isinstance(eventsData, list):
+            from events.pojos.PolymarketEventResponse import PolymarketEventResponse
+            events = [PolymarketEventResponse.fromAPIResponse(eventData) for eventData in eventsData]
         
         return PolymarketMarketResponse(
             id=str(data.get('id', '')),
@@ -236,6 +248,8 @@ class PolymarketMarketResponse:
             deployingTimestamp=deployingTimestamp,
             rfqEnabled=data.get('rfqEnabled', False),
             holdingRewardsEnabled=data.get('holdingRewardsEnabled', False),
-            feesEnabled=data.get('feesEnabled', False)
+            feesEnabled=data.get('feesEnabled', False),
+            requiresTranslation=data.get('requiresTranslation', False),
+            events=events
         )
 
