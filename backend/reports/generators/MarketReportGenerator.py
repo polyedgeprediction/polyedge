@@ -138,7 +138,9 @@ class MarketReportGenerator:
                     'liquidity': marketResponse.liquidity,
                     'volume': marketResponse.volume,
                     'outcomePrices': marketResponse.outcomePrices,
-                    'outcomes': marketResponse.outcomes
+                    'outcomes': marketResponse.outcomes,
+                    'startDateIso': marketResponse.startDateIso,
+                    'endDateIso': marketResponse.endDateIso
                 }
             return None
         except Exception as e:
@@ -153,8 +155,6 @@ class MarketReportGenerator:
         """Build market information dictionary from DB and API data."""
         marketInfo = {
             'question': market.question,
-            'start_date': market.startdate.isoformat() if market.startdate else None,
-            'end_date': market.enddate.isoformat() if market.enddate else None,
             'market_slug': market.marketslug
         }
 
@@ -163,11 +163,15 @@ class MarketReportGenerator:
             marketInfo['description'] = apiData.get('description', '')
             marketInfo['liquidity'] = float(apiData.get('liquidity', 0))
             marketInfo['volume'] = float(apiData.get('volume', 0))
+            marketInfo['start_date'] = apiData.get('startDateIso')
+            marketInfo['end_date'] = apiData.get('endDateIso')
         else:
             # Fallback to DB data
             marketInfo['description'] = ''
             marketInfo['liquidity'] = float(market.liquidity)
             marketInfo['volume'] = float(market.volume)
+            marketInfo['start_date'] = market.startdate.isoformat() if market.startdate else None
+            marketInfo['end_date'] = market.enddate.isoformat() if market.enddate else None
 
         return marketInfo
 
