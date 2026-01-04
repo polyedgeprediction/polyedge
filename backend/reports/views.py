@@ -10,8 +10,10 @@ from rest_framework.request import Request
 
 from reports.generators.SmartMoneyConcentrationGenerator import SmartMoneyConcentrationGenerator
 from reports.generators.MarketLevelsGenerator import MarketLevelsGenerator
+from reports.generators.MarketReportGenerator import MarketReportGenerator
 from reports.pojos.smartmoneyconcentration.SmartMoneyConcentrationRequest import SmartMoneyConcentrationRequest
 from reports.pojos.marketlevels.MarketLevelsRequest import MarketLevelsRequest
+from reports.pojos.marketreport.MarketReportRequest import MarketReportRequest
 from reports.Constants import (
     LOG_PREFIX_SMART_MONEY_CONCENTRATION,
     LOG_PREFIX_MARKET_LEVELS,
@@ -195,4 +197,74 @@ def getMarketLevels(request: Request, marketId: int) -> Response:
         
     except Exception as e:
         logger.exception("%s :: Unexpected error: %s", LOG_PREFIX_MARKET_LEVELS, str(e))
+        return buildErrorResponse(f"Internal server error: {str(e)}", status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ==================== Market Report Endpoint ====================
+
+LOG_PREFIX_MARKET_REPORT = "[MARKET_REPORT]"
+
+
+@api_view(['GET'])
+def getMarketReport(request: Request, marketId: int) -> Response:
+    """
+    Get detailed market report showing all wallets with positions in a market.
+
+    Provides comprehensive analytics including:
+    - Market information (from DB and Polymarket API)
+    - All wallets with positions (open and closed)
+    - Wallet-level PnL metrics and ranges (30, 60, 90 days)
+    - Outcome positions with current prices
+
+    Endpoint: GET /api/reports/smartmoney/market/{marketId}
+
+    Path Parameters:
+        marketId: int - The market ID to analyze
+
+    Response:
+        - Market metadata (question, dates, description, liquidity, volume)
+        - List of wallets with:
+          - Wallet address (proxyWallet)
+          - PnL metrics (invested, current value, pnl, percentage)
+          - PnL ranges for 30, 60, 90 day periods
+          - Outcome positions (Yes/No) with prices, shares, amounts
+        - Summary statistics (total wallets, invested, current value, pnl)
+
+    Note: Includes both open and closed positions.
+    """
+    try:
+        reportRequest = MarketReportRequest(marketId=marketId)
+        isValid, validationError = reportRequest.validate()
+
+        if not isValid:
+            logger.info("%s :: Invalid request: %s", LOG_PREFIX_MARKET_REPORT, validationError)
+            return buildErrorResponse(validationError, status.HTTP_400_BAD_REQUEST)
+
+        logger.info("%s :: Request | MarketId: %d", LOG_PREFIX_MARKET_REPORT, marketId)
+
+        reportResponse = MarketReportGenerator.generate(reportRequest)
+
+        if not reportResponse.success:
+            # Check if it's a "not found" error
+            if "not found" in (reportResponse.errorMessage or "").lower():
+                return buildErrorResponse(reportResponse.errorMessage, status.HTTP_404_NOT_FOUND)
+            logger.info("%s :: Generation failed: %s", LOG_PREFIX_MARKET_REPORT, reportResponse.errorMessage)
+            return buildErrorResponse(reportResponse.errorMessage, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        logger.info(
+            "%s :: Response | MarketId: %d | Wallets: %d | Time: %.3fs",
+            LOG_PREFIX_MARKET_REPORT,
+            marketId,
+            reportResponse.totalWallets,
+            reportResponse.executionTimeSeconds
+        )
+
+        return buildSuccessResponse(reportResponse.toDict())
+
+    except ValueError as e:
+        logger.info("%s :: Invalid parameter: %s", LOG_PREFIX_MARKET_REPORT, str(e))
+        return buildErrorResponse(f"Invalid parameter: {str(e)}", status.HTTP_400_BAD_REQUEST)
+
+    except Exception as e:
+        logger.exception("%s :: Unexpected error: %s", LOG_PREFIX_MARKET_REPORT, str(e))
         return buildErrorResponse(f"Internal server error: {str(e)}", status.HTTP_500_INTERNAL_SERVER_ERROR)
