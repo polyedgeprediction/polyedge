@@ -7,8 +7,11 @@ from . import views
 urlpatterns = [
     # Smart Money Concentration Report
     path('smartmoney/concentration', views.getSmartMoneyConcentration, name='smartmoney-concentration'),
-    
+
     # Market Levels Report - Buying level distribution for a specific market
     path('smartmoney/concentration/market/<int:marketId>/levels', views.getMarketLevels, name='market-levels'),
+
+    # Market Report - Detailed report for a specific market with all wallet positions
+    path('smartmoney/market/<int:marketId>', views.getMarketReport, name='market-report'),
 ]
 
